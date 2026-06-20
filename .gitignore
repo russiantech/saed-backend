@@ -1,0 +1,99 @@
+# ==================================
+# PYTHON
+# ==================================
+venv/
+env/
+ENV/
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+*.so
+
+# Django
+db.sqlite3
+backend/db.sqlite3
+media/
+staticfiles/
+
+# Logs
+*.log
+logs/
+
+# ==================================
+# DJANGO SECRETS
+# ==================================
+.env
+.env.*
+!.env.example
+
+# ==================================
+# NODE
+# ==================================
+node_modules/
+frontend/node_modules/
+build/
+_/
+
+# Build folders
+build/
+dist/
+frontend/build/
+frontend/dist/
+
+# ==================================
+# VSCODE
+# ==================================
+.vscode/
+.history/
+
+# ==================================
+# JETBRAINS
+# ==================================
+.idea/
+
+# ==================================
+# OS FILES
+# ==================================
+.DS_Store
+Thumbs.db
+
+# ==================================
+# TESTS / COVERAGE
+# ==================================
+.coverage
+htmlcov/
+.pytest_cache/
+coverage/
+
+# ==================================
+# REACT
+# ==================================
+frontend/.env
+frontend/.env.*
+frontend/package-lock.json
+
+# ==================================
+# DJANGO MIGRATION CACHE
+# ==================================
+*.sqlite3
+*.db
+
+# ==================================
+# TEMP FILES
+# ==================================
+*.tmp
+*.swp
+*.bak
+
+
+
+# Ignore files ending with underscore + numbers
+*_[0-9].*
+*_[0-9][0-9]*.*
+migrations/versions_0/
+
+# Ignore underscore-prefixed directories everywhere
+_*/
+**/_*/
