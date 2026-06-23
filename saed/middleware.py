@@ -77,7 +77,7 @@ class RequestLogMiddleware:
                 "content_length": request.META.get("CONTENT_LENGTH", 0),
                 "remote_addr": request.META.get("REMOTE_ADDR"),
                 "user_agent": request.META.get("HTTP_USER_AGENT", "")[:100],
-                "user_id": request.user.id if request.user.is_authenticated else None,
+                "user_id": request.user.id if request.user and request.user.is_authenticated else None,
             }
         )
         
@@ -98,7 +98,7 @@ class RequestLogMiddleware:
                 "path": request.path,
                 "status_code": response.status_code,
                 "duration_ms": round(duration, 2),
-                "user_id": request.user.id if request.user.is_authenticated else None,
+                "user_id": request.user.id if request.user and request.user.is_authenticated else None,
             }
         )
         
