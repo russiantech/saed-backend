@@ -246,6 +246,16 @@ class ManageApplicationDetailView(APIView):
         data = request.data
         new_status = data.get("status")
         valid = {"approved", "declined", "completed"}
+        if new_status and new_status not in valid:
+            return Response({"error": "Choose approve, decline, or complete.",
+                             "fields": {"status": "Invalid application status."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if application.status == "completed" and role_for(request.user) != "saed_admin":
+            return Response({"error": "Only admins can change the status of a completed application.",
+                             "fields": {"status": "Completed applications can only be modified by an admin."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
         if new_status and new_status in valid:
             application.status = new_status
             application.save(update_fields=["status"])

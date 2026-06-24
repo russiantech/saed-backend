@@ -3,13 +3,14 @@ Trainer and connection views.
 """
 
 from django.conf import settings as django_settings
+from django.contrib.auth.models import User
 from django.db import transaction
 from django.utils.timezone import now
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Connection, Course, Profile
+from ..models import Connection, Course, CourseEnrollment, Notification, Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async, _notify_user,
     read_json, user_payload, trainer_payload, trainers_payload,
@@ -23,18 +24,20 @@ class AvailableTrainersView(APIView):
 
     def get(self, request):
         try:
-            specialization = request.GET.get("specialization", "").strip()
             lga = request.GET.get("lga", "").strip()
+            skill = request.GET.get("skill", "").strip()
+            specialization = request.GET.get("specialization", "").strip()
+            query = skill or specialization
             trainers = Profile.objects.filter(
                 role="trainer", is_authorized=True, user__is_active=True
             ).select_related("user")
-            if specialization:
-                trainers = trainers.filter(specialization__icontains=specialization)
-            if lga:
-                trainers = trainers.filter(partner_lgas__contains=[lga])
+            if query:
+                trainers = trainers.filter(specialization__icontains=query)
             result = []
             for p in trainers:
                 user = p.user
+                if lga and lga not in (p.partner_lgas or []):
+                    continue
                 result.append({
                     "id": user.id,
                     "fullName": user.get_full_name() or user.email,
@@ -59,12 +62,27 @@ class TrainerDetailView(APIView):
 
     def get(self, request, trainer_id):
         try:
-            from django.contrib.auth.models import User
             user = User.objects.select_related("profile").get(
                 id=trainer_id, profile__role="trainer", is_active=True
             )
             profile = user.profile
             courses = Course.objects.filter(trainer=user, is_active=True)
+            existing_connection = Connection.objects.filter(
+                corps_member=request.user, trainer=user
+            ).first() if request.user.is_authenticated else None
+
+            course_list = []
+            for c in courses:
+                enrollment = CourseEnrollment.objects.filter(
+                    student=request.user, course=c
+                ).first() if request.user.is_authenticated else None
+                course_list.append({
+                    **course_payload(c),
+                    "isEnrolled": enrollment is not None,
+                    "isPaid": enrollment.status == "confirmed" if enrollment else False,
+                    "enrollmentStatus": enrollment.status if enrollment else None,
+                })
+
             data = {
                 "id": user.id,
                 "fullName": user.get_full_name() or user.email,
@@ -76,7 +94,9 @@ class TrainerDetailView(APIView):
                 "companyName": profile.company_name,
                 "numberTrained": profile.number_trained,
                 "profilePicture": f"{django_settings.MEDIA_URL}{profile.profile_picture.name}" if profile.profile_picture else None,
-                "courses": [course_payload(c) for c in courses],
+                "connectionStatus": existing_connection.status if existing_connection else "none",
+                "connectionId": existing_connection.id if existing_connection else None,
+                "courses": course_list,
             }
             return Response(data)
         except Exception as exc:
@@ -96,23 +116,28 @@ class SelectTrainersView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
         try:
             with transaction.atomic():
+                created_count = 0
                 for trainer_id in trainer_ids:
-                    from django.contrib.auth.models import User
                     try:
-                        trainer = User.objects.get(id=trainer_id, profile__role="trainer")
+                        trainer = User.objects.select_related("profile").get(
+                            id=trainer_id, is_active=True, profile__role="trainer", profile__is_authorized=True
+                        )
                     except User.DoesNotExist:
                         continue
-                    connection, created = Connection.objects.get_or_create(
-                        corps_member=request.user, trainer=trainer,
+                    _, created = Connection.objects.get_or_create(
+                        corps_member=request.user,
+                        trainer=trainer,
+                        defaults={"status": "active"},
                     )
                     if created:
+                        created_count += 1
                         _notify_user(trainer, "New Connection Request",
                                      f"{request.user.get_full_name()} wants to connect with you.",
                                      reason="connection_request",
                                      created_by_role="corps_member")
                 request.user.profile.has_selected_trainers = True
                 request.user.profile.save(update_fields=["has_selected_trainers"])
-            return Response({"ok": True, "message": "Trainer selections submitted."})
+            return Response({"ok": True, "connected": created_count})
         except Exception as exc:
             _log_error("Select trainers error", exc=exc)
             return Response({"error": "Failed to select trainers."},
@@ -126,18 +151,38 @@ class MyTrainersView(APIView):
         try:
             connections = Connection.objects.filter(
                 corps_member=request.user
-            ).select_related("trainer", "trainer__profile")
+            ).select_related("trainer", "trainer__profile").exclude(status="cancelled")
             result = []
-            for c in connections:
-                t = c.trainer
-                p = getattr(t, "profile", None)
+            for conn in connections:
+                trainer = conn.trainer
+                profile = trainer.profile
+                courses = Course.objects.filter(trainer=trainer, is_active=True)
                 result.append({
-                    "id": t.id,
-                    "fullName": t.get_full_name() or t.email,
-                    "email": t.email,
-                    "specialization": p.specialization if p else "",
-                    "connectionStatus": c.status,
-                    "connectionId": c.id,
+                    "id": trainer.id,
+                    "fullName": trainer.get_full_name() or trainer.email,
+                    "email": trainer.email,
+                    "specialization": profile.specialization,
+                    "bio": profile.bio,
+                    "companyName": profile.company_name,
+                    "yearsExperience": profile.years_experience,
+                    "numberTrained": profile.number_trained,
+                    "connectionStatus": conn.status,
+                    "connectedAt": conn.connected_at.isoformat(),
+                    "courses": [
+                        {
+                            "id": c.id,
+                            "title": c.title,
+                            "description": c.description,
+                            "category": c.category,
+                            "price": str(c.price),
+                            "durationWeeks": c.duration_weeks,
+                            "startDate": c.start_date.isoformat() if c.start_date else None,
+                            "endDate": c.end_date.isoformat() if c.end_date else None,
+                            "maxStudents": c.max_students,
+                            "hasFastTrack": c.has_fast_track,
+                        }
+                        for c in courses
+                    ],
                 })
             return Response({"trainers": result})
         except Exception as exc:
@@ -156,9 +201,8 @@ class ConnectTrainerView(APIView):
             return Response({"error": "Trainer ID is required."},
                             status=status.HTTP_400_BAD_REQUEST)
         try:
-            from django.contrib.auth.models import User
             trainer = User.objects.select_related("profile").get(
-                id=trainer_id, profile__role="trainer", is_active=True
+                id=trainer_id, is_active=True, profile__role="trainer", profile__is_authorized=True
             )
         except User.DoesNotExist:
             return Response({"error": "Trainer not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -171,21 +215,41 @@ class ConnectTrainerView(APIView):
                 return Response({"error": "Connection already exists."},
                                 status=status.HTTP_400_BAD_REQUEST)
 
+            trainer_courses = Course.objects.filter(trainer=trainer, is_active=True)
+            all_full = all(
+                Connection.objects.filter(trainer=trainer, status="active").count() >= c.max_students
+                for c in trainer_courses
+            ) if trainer_courses.exists() else False
+
+            if all_full:
+                connection.status = "cancelled"
+                connection.save(update_fields=["status"])
+                Notification.objects.create(
+                    user=request.user,
+                    title="Connection Auto-Declined",
+                    message=f"Your connection request with {trainer.get_full_name()} was automatically declined because all course slots are full.",
+                    reason="connection_request",
+                    created_by_role="trainer",
+                )
+                return Response({"error": "All course slots for this trainer are full."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
             cm_name = request.user.get_full_name() or request.user.email
             _notify_user(trainer, "New Connection Request",
-                         f"{cm_name} wants to connect with you.",
+                         f"{cm_name} wants to connect with you. Please review and approve.",
                          reason="connection_request", created_by_role="corps_member")
 
             _send_email_async(
                 subject="SAED IMS - New Connection Request",
-                message=f"Hello {trainer.get_full_name()},\n\n{cm_name} wants to connect with you.\n\nBest regards,\nNYSC SAED IMS",
+                message=f"Hello {trainer.get_full_name()},\n\n{cm_name} ({request.user.email}) wants to connect with you.\nPlease log in to review and approve this request.\n\nBest regards,\nNYSC SAED IMS",
                 recipient_list=[trainer.email],
                 html_message=(
                     f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
                     f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
                     f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
                     f'<h2 style="color:#1a5f2a;margin-top:0;">New Connection Request</h2>'
-                    f'<p><strong>{cm_name}</strong> wants to connect with you.</p></div></div>'
+                    f'<p><strong>{cm_name}</strong> ({request.user.email}) wants to connect with you.</p>'
+                    f'<p>Please log in to review and approve this request.</p></div></div>'
                 ),
             )
             return Response({"connection": connection_payload(connection)}, status=status.HTTP_201_CREATED)
@@ -242,7 +306,6 @@ class ConnectionApproveView(APIView):
             _notify_user(connection.corps_member, "Connection Approved",
                          f"Your connection with {request.user.get_full_name()} has been approved!",
                          reason="connection_approved", created_by_role="trainer")
-            frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002")
             _send_email_async(
                 subject="SAED IMS - Connection Approved!",
                 message=f"Hello {connection.corps_member.get_full_name()},\n\nYour connection has been approved!",
@@ -291,10 +354,47 @@ class CorperProfileForTrainerView(APIView):
 
     def get(self, request, corper_id):
         try:
-            from django.contrib.auth.models import User
-            corper = User.objects.select_related("profile").get(id=corper_id)
-            return Response({"corper": user_payload(corper, request)})
-        except Exception as exc:
-            _log_error("Corper profile error", exc=exc)
+            corper = User.objects.select_related("profile").get(id=corper_id, profile__role="corps_member")
+        except User.DoesNotExist:
             return Response({"error": "Corps member not found."},
                             status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            connection = Connection.objects.filter(
+                trainer=request.user, corps_member=corper
+            ).first()
+
+            trainer_courses = Course.objects.filter(trainer=request.user, is_active=True)
+            corper_data = user_payload(corper, request)
+            corper_data["connectionStatus"] = connection.status if connection else "none"
+            corper_data["connectionId"] = connection.id if connection else None
+
+            corper_enrollments = CourseEnrollment.objects.filter(
+                student=corper, course__in=trainer_courses
+            )
+            enrollment_map = {e.course_id: e for e in corper_enrollments}
+
+            courses_with_status = []
+            for course in trainer_courses:
+                enrolled_count = Connection.objects.filter(
+                    trainer=request.user, status="active"
+                ).count()
+                enrollment = enrollment_map.get(course.id)
+                courses_with_status.append({
+                    **course_payload(course),
+                    "isFull": enrolled_count >= course.max_students,
+                    "enrolledCount": enrolled_count,
+                    "isEnrolled": enrollment is not None,
+                    "isPaid": enrollment.status == "confirmed" if enrollment else False,
+                    "enrollmentStatus": enrollment.status if enrollment else None,
+                    "enrollmentId": enrollment.id if enrollment else None,
+                })
+
+            return Response({
+                "corper": corper_data,
+                "courses": courses_with_status,
+            })
+        except Exception as exc:
+            _log_error("Corper profile for trainer error", exc=exc)
+            return Response({"error": "Failed to load corper profile."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)

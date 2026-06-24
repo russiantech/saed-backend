@@ -6,7 +6,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from ..models import Application, Connection, Course, CourseEnrollment, Program, Profile
-from .base import _log_error, role_for, IsAuthenticatedAPI
+from .base import (
+    _log_error, role_for, application_payload, program_payload,
+    managed_programs_for, IsAuthenticatedAPI,
+)
 
 
 class DashboardView(APIView):
@@ -16,40 +19,64 @@ class DashboardView(APIView):
         try:
             user = request.user
             user_role = role_for(user)
-            data = {"role": user_role}
+            payload = {"stats": {}, "applications": []}
 
             if user_role == "corps_member":
-                data["applications"] = Application.objects.filter(applicant=user).count()
-                data["programs"] = Program.objects.filter(is_active=True, is_restricted=False).count()
-                data["connections"] = Connection.objects.filter(
-                    corps_member=user, status="active"
-                ).count()
-                data["enrolledCourses"] = CourseEnrollment.objects.filter(
-                    student=user, status="confirmed"
-                ).count()
+                applications = Application.objects.filter(applicant=user).select_related("program")
+                my_connections = Connection.objects.filter(corps_member=user).count()
+                payload["stats"] = {
+                    "applications": applications.count(),
+                    "pending": applications.filter(status="pending").count(),
+                    "approved": applications.filter(status="approved").count(),
+                    "connections": my_connections,
+                }
+                payload["applications"] = [application_payload(item) for item in applications[:5]]
 
             elif user_role == "trainer":
-                data["courses"] = Course.objects.filter(trainer=user).count()
-                data["activeCourses"] = Course.objects.filter(trainer=user, is_active=True).count()
-                data["connections"] = Connection.objects.filter(
-                    trainer=user, status="active"
-                ).count()
-                data["pendingEnrollments"] = CourseEnrollment.objects.filter(
-                    course__trainer=user, status="pending"
-                ).count()
+                my_courses = Course.objects.filter(trainer=user, is_active=True)
+                my_corpers = Connection.objects.filter(trainer=user).count()
+                trainer_programs = managed_programs_for(user).filter(is_active=True)
+                payload["stats"] = {
+                    "courses": my_courses.count(),
+                    "corpers": my_corpers,
+                    "programs": trainer_programs.count(),
+                }
+                payload["trainerPrograms"] = [program_payload(p) for p in trainer_programs[:4]]
 
-            elif user_role in ("saed_admin", "dunis_admin"):
-                data["totalUsers"] = Profile.objects.count()
-                data["totalTrainers"] = Profile.objects.filter(role="trainer").count()
-                data["totalCorpsMembers"] = Profile.objects.filter(role="corps_member").count()
-                data["totalPrograms"] = Program.objects.count()
-                data["totalCourses"] = Course.objects.count()
-                data["pendingApplications"] = Application.objects.filter(status="pending").count()
-                data["pendingRefunds"] = CourseEnrollment.objects.filter(
-                    refund_requested=True, refund_processed=False
-                ).count()
+            elif user_role == "saed_admin":
+                trainer_profiles = Profile.objects.filter(role="trainer")
+                payload["stats"] = {
+                    "totalTrainers": trainer_profiles.count(),
+                    "approvedTrainers": trainer_profiles.filter(is_authorized=True).count(),
+                    "pendingTrainers": trainer_profiles.filter(authorization_status="pending").count(),
+                    "declinedTrainers": trainer_profiles.filter(authorization_status="declined").count(),
+                    "removedTrainers": trainer_profiles.filter(authorization_status="removed").count(),
+                    "totalCorpers": Profile.objects.filter(role="corps_member").count(),
+                    "totalConnections": Connection.objects.count(),
+                    "totalCourses": Course.objects.filter(is_active=True).count(),
+                }
+                payload["partnerStats"] = payload["stats"]
 
-            return Response(data)
+            elif user_role == "dunis_admin":
+                trainer_profiles = Profile.objects.filter(role="trainer")
+                pending_payments = trainer_profiles.filter(is_authorized=True, has_paid=False).count()
+                fast_track_enabled = trainer_profiles.filter(can_upload_fast_track=True).count()
+                payload["stats"] = {
+                    "totalTrainers": trainer_profiles.count(),
+                    "approvedTrainers": trainer_profiles.filter(is_authorized=True).count(),
+                    "pendingTrainers": trainer_profiles.filter(authorization_status="pending").count(),
+                    "declinedTrainers": trainer_profiles.filter(authorization_status="declined").count(),
+                    "removedTrainers": trainer_profiles.filter(authorization_status="removed").count(),
+                    "paidTrainers": trainer_profiles.filter(has_paid=True).count(),
+                    "pendingPayments": pending_payments,
+                    "fastTrackEnabled": fast_track_enabled,
+                    "totalCorpers": Profile.objects.filter(role="corps_member").count(),
+                    "totalConnections": Connection.objects.count(),
+                    "totalCourses": Course.objects.filter(is_active=True).count(),
+                }
+                payload["partnerStats"] = payload["stats"]
+
+            return Response(payload)
         except Exception as exc:
             _log_error("Dashboard error", exc=exc)
             return Response({"error": "Failed to load dashboard."},

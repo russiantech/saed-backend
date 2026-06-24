@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from ..models import Notification
-from .base import _log_error, _log_info, IsAuthenticatedAPI
+from .base import _log_error, _log_info, IsAuthenticatedAPI, role_for
 
 
 class NotificationListView(APIView):
@@ -19,8 +19,16 @@ class NotificationListView(APIView):
             unread_count = Notification.objects.filter(
                 user=request.user, is_read=False
             ).count()
-            result = []
+            user_role = role_for(request.user)
+            filtered = []
             for n in notifications:
+                if n.reason == "admin_update":
+                    continue
+                if user_role == "saed_admin" and n.created_by_role == "dunis_admin":
+                    continue
+                filtered.append(n)
+            result = []
+            for n in filtered[:50]:
                 result.append({
                     "id": n.id,
                     "title": n.title,

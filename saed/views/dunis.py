@@ -20,7 +20,7 @@ class DunisPendingPaymentsView(APIView):
     def get(self, request):
         try:
             profiles = Profile.objects.filter(
-                role="trainer", has_paid=True, payment_verified=False
+                role="trainer", is_authorized=True, has_paid=False
             ).select_related("user")
             result = []
             for p in profiles:
@@ -28,8 +28,12 @@ class DunisPendingPaymentsView(APIView):
                     "id": p.user.id,
                     "fullName": p.user.get_full_name() or p.user.email,
                     "email": p.user.email,
-                    "paymentReference": p.payment_reference,
+                    "phone": p.phone,
                     "specialization": p.specialization,
+                    "companyName": p.company_name,
+                    "hasPaid": p.has_paid,
+                    "paymentVerified": p.payment_verified,
+                    "authorizedAt": p.authorized_at.isoformat() if p.authorized_at else None,
                 })
             return Response({"trainers": result})
         except Exception as exc:

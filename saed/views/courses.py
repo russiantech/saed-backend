@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Course, FastTrackVideo
+from ..models import Course, CourseEnrollment, FastTrackVideo
 from .base import (
     _log_error, _log_info, _log_warning, _notify_user,
     read_json, _safe_float, _resolve_course_dates, _parse_date,
@@ -64,6 +64,7 @@ class ManageCoursesView(APIView):
                     start_date=_parse_date(data.get("startDate")),
                     end_date=_parse_date(data.get("endDate")),
                     max_students=max_students,
+                    has_fast_track=bool(data.get("hasFastTrack", False)),
                 )
             return Response({"course": course_payload(course)}, status=status.HTTP_201_CREATED)
         except Exception as exc:
@@ -82,26 +83,26 @@ class ManageCourseDetailView(APIView):
             return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
 
         data = _resolve_course_dates(dict(request.data))
-        if "title" in data:
-            course.title = str(data["title"]).strip() or course.title
-        if "description" in data:
-            course.description = str(data["description"]).strip()
-        if "category" in data:
-            course.category = str(data["category"]).strip()
-        if "price" in data:
-            course.price = _safe_float(data["price"], 0)
-        if "durationWeeks" in data:
-            course.duration_weeks = _safe_float(data["durationWeeks"], 4)
-        if "startDate" in data:
-            course.start_date = data["startDate"] or None
-        if "endDate" in data:
-            course.end_date = data["endDate"] or None
-        if "maxStudents" in data:
-            course.max_students = int(data["maxStudents"]) if data["maxStudents"] else 40
-        if "isActive" in data:
-            course.is_active = bool(data["isActive"])
-        if "hasFastTrack" in data:
-            course.has_fast_track = bool(data["hasFastTrack"])
+        for field in ["title", "description", "category", "price", "durationWeeks", "startDate", "endDate", "maxStudents", "hasFastTrack", "isActive"]:
+            if field in data:
+                model_field = {
+                    "title": "title", "description": "description", "category": "category",
+                    "price": "price", "durationWeeks": "duration_weeks", "startDate": "start_date",
+                    "endDate": "end_date", "maxStudents": "max_students", "hasFastTrack": "has_fast_track",
+                    "isActive": "is_active",
+                }[field]
+                value = data[field]
+                if model_field in ("price",):
+                    value = _safe_float(value, 0)
+                elif model_field in ("duration_weeks",):
+                    value = _safe_float(value, 4)
+                elif model_field in ("max_students",):
+                    value = int(value) if value else 40
+                elif model_field in ("has_fast_track", "is_active"):
+                    value = bool(value)
+                elif model_field in ("start_date", "end_date"):
+                    value = _parse_date(value) or value or None
+                setattr(course, model_field, value)
         course.save()
         return Response({"course": course_payload(course)})
 
@@ -119,7 +120,10 @@ class AdminCoursesView(APIView):
 
     def get(self, request):
         try:
-            courses = Course.objects.select_related("trainer").order_by("-created_at")
+            courses = Course.objects.select_related("trainer", "trainer__profile").all()
+            user_role = role_for(request.user)
+            if user_role == "saed_admin":
+                courses = courses.exclude(is_restricted=True, restricted_by__profile__role="dunis_admin")
             return Response({"courses": [course_payload(c) for c in courses]})
         except Exception as exc:
             _log_error("Admin courses error", exc=exc)
@@ -174,10 +178,30 @@ class CourseDetailView(APIView):
 
     def get(self, request, course_id):
         try:
-            course = Course.objects.select_related("trainer").get(id=course_id)
-            data = course_payload(course)
-            videos = FastTrackVideo.objects.filter(course=course).order_by("order")
-            data["videos"] = [fast_track_video_payload(v) for v in videos]
-            return Response(data)
+            course = Course.objects.select_related("trainer", "trainer__profile").get(id=course_id, is_active=True)
         except Course.DoesNotExist:
             return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        videos = FastTrackVideo.objects.filter(course=course).order_by("order")
+        return Response({
+            "course": course_payload(course),
+            "trainer": {
+                "id": course.trainer.id,
+                "fullName": course.trainer.get_full_name() or course.trainer.email,
+                "specialization": course.trainer.profile.specialization if hasattr(course.trainer, "profile") else "",
+                "companyName": course.trainer.profile.company_name if hasattr(course.trainer, "profile") else "",
+            },
+            "videos": [
+                {
+                    "id": v.id,
+                    "title": v.title,
+                    "description": v.description,
+                    "videoUrl": v.video_url,
+                    "durationSeconds": v.duration_seconds,
+                    "order": v.order,
+                    "price": str(v.price),
+                    "isFreePreview": v.is_free_preview,
+                }
+                for v in videos
+            ],
+        })

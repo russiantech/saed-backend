@@ -64,8 +64,17 @@ class LoginView(APIView):
             user = authenticated
             profile = getattr(user, "profile", None)
             if role and profile and profile.role != role:
-                return Response({"error": "This account is registered for a different role."},
-                                status=status.HTTP_400_BAD_REQUEST)
+                role_labels = {
+                    "corps_member": "Corps Member",
+                    "trainer": "Trainer",
+                    "saed_admin": "SAED Admin",
+                    "dunis_admin": "DUNIS Admin",
+                }
+                actual = role_labels.get(profile.role, profile.role)
+                attempted = role_labels.get(role, role)
+                return Response({
+                    "error": f"This account is registered as a {actual}.",
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             login(request, user)
             _log_info(f"User {user.id} logged in")

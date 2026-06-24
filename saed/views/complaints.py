@@ -1,6 +1,7 @@
 """
 Complaint views.
 """
+from django.contrib.auth.models import User
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -26,11 +27,16 @@ class SubmitComplaintView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            complaint = Complaint.objects.create(
-                user=request.user, subject=subject, message=message,
-            )
-            _log_info(f"Complaint created: {complaint.id}")
-            return Response({"ok": True, "message": "Complaint submitted."},
+            sender_name = request.user.get_full_name() or request.user.email
+            admin_users = User.objects.filter(profile__role__in=["saed_admin", "dunis_admin"])
+            for admin in admin_users:
+                Complaint.objects.create(
+                    user=admin,
+                    subject=subject,
+                    message=f"From: {sender_name} ({request.user.email})\n\n{message}",
+                )
+            _log_info(f"Complaint distributed to {admin_users.count()} admins")
+            return Response({"ok": True, "message": "Complaint submitted successfully."},
                             status=status.HTTP_201_CREATED)
         except Exception as exc:
             _log_error("Complaint submission error", exc=exc)
