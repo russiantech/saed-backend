@@ -153,6 +153,7 @@ class SignupView(APIView):
             state_of_origin=data.get("stateOfOrigin", "").strip(),
             lga_of_deployment=data.get("lgaOfDeployment", "").strip(),
             skill_interest=data.get("skillInterest", "").strip(),
+            skill_interests=data.get("skillInterests", []),
         )
         login(request, user)
         return Response({"user": user_payload(user, request)}, status=status.HTTP_201_CREATED)

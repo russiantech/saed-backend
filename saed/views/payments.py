@@ -73,11 +73,17 @@ class PaystackInitializeView(APIView):
             return Response({"error": body.get("message", "Payment initialization failed.")},
                             status=status.HTTP_400_BAD_REQUEST)
         except urllib.error.HTTPError as e:
-            body = json.loads(e.read().decode()) if e.readable() else {}
+            try:
+                body = json.loads(e.read().decode())
+            except (json.JSONDecodeError, ValueError):
+                body = {"message": f"Payment gateway error (HTTP {e.code})."}
             return Response({"error": body.get("message", "Payment gateway error.")},
                             status=status.HTTP_400_BAD_REQUEST)
         except urllib.error.URLError:
             return Response({"error": "Unable to connect to payment gateway."},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        except json.JSONDecodeError:
+            return Response({"error": "Invalid response from payment gateway."},
                             status=status.HTTP_502_BAD_GATEWAY)
         except Exception as exc:
             _log_error("Paystack unexpected error", exc=exc)
@@ -169,11 +175,17 @@ class CoursePayInitializeView(APIView):
             return Response({"error": body.get("message", "Payment initialization failed.")},
                             status=status.HTTP_400_BAD_REQUEST)
         except urllib.error.HTTPError as e:
-            body = json.loads(e.read().decode()) if e.readable() else {}
+            try:
+                body = json.loads(e.read().decode())
+            except (json.JSONDecodeError, ValueError):
+                body = {"message": f"Payment gateway error (HTTP {e.code})."}
             return Response({"error": body.get("message", "Payment gateway error.")},
                             status=status.HTTP_400_BAD_REQUEST)
         except urllib.error.URLError:
             return Response({"error": "Unable to connect to payment gateway."},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        except json.JSONDecodeError:
+            return Response({"error": "Invalid response from payment gateway."},
                             status=status.HTTP_502_BAD_GATEWAY)
         except Exception as exc:
             _log_error("Course payment init error", exc=exc)

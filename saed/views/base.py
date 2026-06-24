@@ -206,14 +206,15 @@ class IsAuthenticatedAPI(BasePermission):
         return request.user and request.user.is_authenticated
 
 
-class HasRole(BasePermission):
-    def __init__(self, *roles):
-        self.roles = roles
-
-    def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated):
-            return False
-        return role_for(request.user) in self.roles
+def HasRole(*roles):
+    """Factory that returns a DRF permission class checking the user's role."""
+    class _HasRole(BasePermission):
+        def has_permission(self, request, view):
+            if not (request.user and request.user.is_authenticated):
+                return False
+            return role_for(request.user) in roles
+    _HasRole.__name__ = f"HasRole_{'_'.join(roles)}"
+    return _HasRole
 
 
 class IsAuthorizedTrainer(BasePermission):

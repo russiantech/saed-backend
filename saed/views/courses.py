@@ -12,7 +12,7 @@ from rest_framework import status
 from ..models import Course, FastTrackVideo
 from .base import (
     _log_error, _log_info, _log_warning, _notify_user,
-    read_json, _safe_float, _resolve_course_dates,
+    read_json, _safe_float, _resolve_course_dates, _parse_date,
     course_payload, fast_track_video_payload, role_for,
     validation_error, HasRole, IsAuthenticatedAPI,
 )
@@ -61,8 +61,8 @@ class ManageCoursesView(APIView):
                     category=category,
                     price=price,
                     duration_weeks=_safe_float(data.get("durationWeeks", 4), 4),
-                    start_date=data.get("startDate"),
-                    end_date=data.get("endDate"),
+                    start_date=_parse_date(data.get("startDate")),
+                    end_date=_parse_date(data.get("endDate")),
                     max_students=max_students,
                 )
             return Response({"course": course_payload(course)}, status=status.HTTP_201_CREATED)
