@@ -6,7 +6,7 @@ Re-exports all views for backward-compatible url references (views.health, etc.)
 
 from .base import (
     _log_error, _log_info, _log_warning,
-    _send_email_async, _notify_admins, _notify_user,
+    _send_email_async, _notify_admins, _notify_admins_email, _notify_user,
     read_json, role_for, validation_error, clean_email,
     user_payload, program_payload, application_payload,
     program_categories_payload, trainer_payload, trainers_payload,

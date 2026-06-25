@@ -54,6 +54,11 @@ class ManageUsersView(APIView):
             fields["fullName"] = "Enter first and last name."
         if not email:
             fields["email"] = "Enter a valid email address."
+        elif User.objects.filter(email__iexact=email).exists():
+            fields["email"] = "An account with this email already exists."
+        phone = data.get("phone", "").strip()
+        if phone and Profile.objects.filter(phone=phone).exists():
+            fields["phone"] = "An account with this phone number already exists."
         if role != "trainer":
             fields["role"] = "Admins can create trainer accounts only."
         if password:
@@ -144,7 +149,12 @@ class ManageUserDetailView(APIView):
                     profile.role = data["role"]
 
                 if "phone" in data:
-                    profile.phone = data.get("phone", "").strip()
+                    phone_val = data.get("phone", "").strip()
+                    if phone_val and Profile.objects.filter(phone=phone_val).exclude(user=user).exists():
+                        return Response({"error": "An account with this phone number already exists.",
+                                         "fields": {"phone": "Phone number already in use."}},
+                                        status=status.HTTP_400_BAD_REQUEST)
+                    profile.phone = phone_val
                 if "isActive" in data:
                     if user.id == request.user.id and not bool(data["isActive"]):
                         return Response({"error": "You cannot deactivate your own account."},

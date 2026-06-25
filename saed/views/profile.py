@@ -59,6 +59,13 @@ class UpdateProfileView(APIView):
                         else:
                             setattr(profile, model_key, str(value).strip() if value else "")
 
+                if "phone" in data:
+                    phone_val = data.get("phone", "").strip()
+                    if phone_val and Profile.objects.filter(phone=phone_val).exclude(user=user).exists():
+                        return Response({"error": "An account with this phone number already exists.",
+                                         "fields": {"phone": "Phone number already in use."}},
+                                        status=status.HTTP_400_BAD_REQUEST)
+
                 if profile.role == "trainer":
                     trainer_fields = {
                         "bio": "bio", "companyName": "company_name",

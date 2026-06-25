@@ -94,6 +94,49 @@ def _notify_admins(title, message, reason="admin_update", program=None,
                    extra={"title": title})
 
 
+def _notify_admins_email(subject, message, html_message=None,
+                         email_type="general", from_email=None):
+    """
+    Send emails to admin users based on their role and the email type.
+
+    email_type:
+      - "trainer"   → both SAED and DUNIS admins (trainer registrations, connections)
+      - "payment"   → DUNIS admins only (refunds, payment issues)
+      - "general"   → both SAED and DUNIS admins (complaints, general alerts)
+    from_email: sender address (defaults to DEFAULT_FROM_EMAIL)
+    """
+    try:
+        if email_type == "payment":
+            roles = ["dunis_admin"]
+        else:
+            roles = ["saed_admin", "dunis_admin"]
+
+        admin_emails = list(
+            Profile.objects.filter(role__in=roles)
+            .values_list("user__email", flat=True)
+        )
+        admin_emails = [e for e in admin_emails if e]
+
+        if not admin_emails:
+            _log_warning("No admin emails found for notification",
+                         extra={"email_type": email_type})
+            return
+
+        _send_email_async(
+            subject=subject,
+            message=message,
+            recipient_list=admin_emails,
+            html_message=html_message,
+            from_email=from_email,
+        )
+        _log_info(f"Admin email sent to {len(admin_emails)} admins",
+                  extra={"subject": subject, "email_type": email_type,
+                         "roles": roles})
+    except Exception as exc:
+        _log_error("Failed to send admin email", exc=exc,
+                   extra={"subject": subject, "email_type": email_type})
+
+
 def _notify_user(user, title, message, reason="user_update", program=None):
     try:
         Notification.objects.create(
@@ -396,10 +439,11 @@ def trainer_program_payload(program):
 
 
 def course_payload(course):
+    trainer = course.trainer
     return {
         "id": course.id,
         "trainerId": course.trainer_id,
-        "trainerName": course.trainer.get_full_name() or course.trainer.email,
+        "trainerName": (trainer.get_full_name() or trainer.email) if trainer else None,
         "title": course.title,
         "description": course.description,
         "category": course.category,

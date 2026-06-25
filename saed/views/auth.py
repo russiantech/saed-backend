@@ -21,6 +21,7 @@ from rest_framework import status
 from ..models import Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async,
+    _notify_admins_email, _notify_user,
     read_json, clean_email, user_payload, _safe_int, validation_error,
 )
 
@@ -126,6 +127,8 @@ class SignupView(APIView):
         if role == "corps_member":
             if not data.get("phone", "").strip():
                 fields["phone"] = "Phone number is required."
+            elif Profile.objects.filter(phone=data.get("phone", "").strip()).exists():
+                fields["phone"] = "An account with this phone number already exists."
             if not data.get("nyscStateCode", "").strip():
                 fields["nyscStateCode"] = "NYSC state code is required."
             if not data.get("stateOfDeployment", "").strip():
@@ -198,8 +201,12 @@ class TrainerSignupView(APIView):
             fields["fullName"] = "Enter first and last name."
         if not email:
             fields["email"] = "Enter a valid email address."
+        elif User.objects.filter(email__iexact=email).exists():
+            fields["email"] = "An account with this email already exists."
         if not phone:
             fields["phone"] = "Phone number is required."
+        elif Profile.objects.filter(phone=phone).exists():
+            fields["phone"] = "An account with this phone number already exists."
         if not specialization:
             fields["specialization"] = "Specialization is required."
         if not partner_lgas:
@@ -272,26 +279,29 @@ class TrainerSignupView(APIView):
             ),
         )
 
-        md_email = getattr(django_settings, "MD_EMAIL", "")
-        if md_email:
-            _send_email_async(
-                subject=f"New Trainer Registration: {full_name}",
-                message=f"A new trainer has registered.\nName: {full_name}\nEmail: {email}",
-                recipient_list=[md_email],
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                    f'<h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#1a5f2a;margin-top:0;">New Trainer Registration</h2>'
-                    f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Name</td><td style="padding:8px;">{full_name}</td></tr>'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Email</td><td style="padding:8px;">{email}</td></tr>'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Phone</td><td style="padding:8px;">{phone}</td></tr>'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Specialization</td><td style="padding:8px;">{specialization}</td></tr>'
-                    f'</table></div></div>'
-                ),
-            )
+        _notify_admins_email(
+            subject=f"New Trainer Registration: {full_name}",
+            message=(
+                f"A new trainer has registered.\n"
+                f"Name: {full_name}\nEmail: {email}\n"
+                f"Phone: {phone}\nSpecialization: {specialization}"
+            ),
+            email_type="trainer",
+            from_email=email,
+            html_message=(
+                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
+                f'<h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                f'<h2 style="color:#1a5f2a;margin-top:0;">New Trainer Registration</h2>'
+                f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
+                f'<tr><td style="padding:8px;font-weight:bold;">Name</td><td style="padding:8px;">{full_name}</td></tr>'
+                f'<tr><td style="padding:8px;font-weight:bold;">Email</td><td style="padding:8px;">{email}</td></tr>'
+                f'<tr><td style="padding:8px;font-weight:bold;">Phone</td><td style="padding:8px;">{phone}</td></tr>'
+                f'<tr><td style="padding:8px;font-weight:bold;">Specialization</td><td style="padding:8px;">{specialization}</td></tr>'
+                f'</table></div></div>'
+            ),
+        )
 
         return Response({"user": user_payload(user, request)}, status=status.HTTP_201_CREATED)
 

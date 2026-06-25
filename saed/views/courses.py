@@ -146,9 +146,10 @@ class RestrictCourseView(APIView):
         course.restricted_by = request.user
         course.restricted_at = now()
         course.save(update_fields=["is_restricted", "restricted_by", "restricted_at"])
-        _notify_user(course.trainer, "Course Restricted",
-                     f"Your course '{course.title}' has been restricted.",
-                     reason="course_restricted")
+        if course.trainer:
+            _notify_user(course.trainer, "Course Restricted",
+                         f"Your course '{course.title}' has been restricted.",
+                         reason="course_restricted")
         return Response({"ok": True, "message": "Course restricted."})
 
 
@@ -167,9 +168,10 @@ class UnrestrictCourseView(APIView):
         course.restricted_by = None
         course.restricted_at = None
         course.save(update_fields=["is_restricted", "restricted_by", "restricted_at"])
-        _notify_user(course.trainer, "Course Unrestricted",
-                     f"Your course '{course.title}' has been unrestricted.",
-                     reason="course_unrestricted")
+        if course.trainer:
+            _notify_user(course.trainer, "Course Unrestricted",
+                         f"Your course '{course.title}' has been unrestricted.",
+                         reason="course_unrestricted")
         return Response({"ok": True, "message": "Course unrestricted."})
 
 
@@ -183,14 +185,17 @@ class CourseDetailView(APIView):
             return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
 
         videos = FastTrackVideo.objects.filter(course=course).order_by("order")
-        return Response({
-            "course": course_payload(course),
-            "trainer": {
+        trainer_data = None
+        if course.trainer:
+            trainer_data = {
                 "id": course.trainer.id,
                 "fullName": course.trainer.get_full_name() or course.trainer.email,
                 "specialization": course.trainer.profile.specialization if hasattr(course.trainer, "profile") else "",
                 "companyName": course.trainer.profile.company_name if hasattr(course.trainer, "profile") else "",
-            },
+            }
+        return Response({
+            "course": course_payload(course),
+            "trainer": trainer_data,
             "videos": [
                 {
                     "id": v.id,

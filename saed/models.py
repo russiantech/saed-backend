@@ -2,6 +2,23 @@ from django.conf import settings
 from django.db import models
 
 
+SKILL_AREAS = [
+    ("creative_industry", "Creative Industry"),
+    ("automobile", "Automobile"),
+    ("construction", "Construction"),
+    ("agro_allied", "Agro-Allied"),
+    ("delivery_logistics", "Delivery & Logistics"),
+    ("culinary_catering", "Culinary & Catering"),
+    ("cleaning_services", "Cleaning Services"),
+    ("green_energy_satellite_security", "Green Energy & Satellite Security"),
+    ("ict", "ICT"),
+    ("cosmetology", "Cosmetology"),
+    ("education", "Education"),
+]
+
+SKILL_AREA_KEYS = [k for k, _ in SKILL_AREAS]
+
+
 class Profile(models.Model):
     ROLE_CHOICES = [
         ("corps_member", "Corps Member"),
@@ -33,7 +50,7 @@ class Profile(models.Model):
     is_email_verified = models.BooleanField(default=False)
     email_verification_token = models.CharField(max_length=64, blank=True)
 
-    specialization = models.CharField(max_length=120, blank=True)
+    specialization = models.CharField(max_length=120, blank=True, choices=SKILL_AREAS)
     partner_lgas = models.JSONField(default=list, blank=True)
     years_experience = models.PositiveSmallIntegerField(default=0)
     bio = models.TextField(blank=True)
@@ -65,12 +82,14 @@ class Profile(models.Model):
 class Course(models.Model):
     trainer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="courses",
     )
     title = models.CharField(max_length=120)
     description = models.TextField(blank=True)
-    category = models.CharField(max_length=32, blank=True)
+    category = models.CharField(max_length=32, blank=True, choices=SKILL_AREAS)
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     duration_weeks = models.PositiveSmallIntegerField(default=4)
     start_date = models.DateField(null=True, blank=True)
@@ -188,20 +207,7 @@ class CourseEnrollment(models.Model):
 
 
 class Program(models.Model):
-    CATEGORY_CHOICES = [
-        ("agro_allied", "Agro Allied"),
-        ("automobile", "Automobile"),
-        ("beautification", "Beautification"),
-        ("construction", "Construction"),
-        ("cosmetology", "Cosmetology"),
-        ("culture_tourism", "Culture & Tourism"),
-        ("education", "Education"),
-        ("environment", "Environment"),
-        ("film_photography", "Film & Photography"),
-        ("food_processing", "Food Processing/Preservation"),
-        ("ict", "ICT"),
-        ("power_energy", "Power & Energy"),
-    ]
+    CATEGORY_CHOICES = SKILL_AREAS
 
     title = models.CharField(max_length=120)
     category = models.CharField(max_length=32, choices=CATEGORY_CHOICES)

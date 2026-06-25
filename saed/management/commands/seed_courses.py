@@ -23,29 +23,29 @@ COURSES = [
     {"trainer_email": "amara.nwosu@saed.test", "title": "Professional Hair Braiding & Styling", "category": "cosmetology", "description": "Master modern braiding techniques, weaving and protective styles.", "price": 20000, "duration_weeks": 6, "max_students": 25},
     {"trainer_email": "amara.nwosu@saed.test", "title": "Skincare & Makeup Artistry", "category": "cosmetology", "description": "Learn skincare routines, facial treatments and professional makeup application.", "price": 25000, "duration_weeks": 4, "max_students": 30, "has_fast_track": True},
 
-    # Ibrahim Mohammed (Agro Allied)
+    # Ibrahim Mohammed (Agro-Allied)
     {"trainer_email": "ibrahim.mohammed@saed.test", "title": "Small-Scale Farming Techniques", "category": "agro_allied", "description": "Practical introduction to crop cultivation, soil management and farm mechanization.", "price": 18000, "duration_weeks": 6, "max_students": 35},
     {"trainer_email": "ibrahim.mohammed@saed.test", "title": "Agribusiness & Market Access", "category": "agro_allied", "description": "Learn how to package, price and distribute agricultural products profitably.", "price": 22000, "duration_weeks": 4, "max_students": 30},
 
-    # Blessing Ogundimu (Film & Photography)
-    {"trainer_email": "blessing.ogundimu@saed.test", "title": "Cinematography & Video Production", "category": "film_photography", "description": "Camera operation, lighting, composition and storytelling for short films.", "price": 30000, "duration_weeks": 8, "max_students": 20, "has_fast_track": True},
-    {"trainer_email": "blessing.ogundimu@saed.test", "title": "Photography for Business", "category": "film_photography", "description": "Product photography, portrait sessions and editing for commercial clients.", "price": 25000, "duration_weeks": 6, "max_students": 25},
+    # Blessing Ogundimu (Creative Industry)
+    {"trainer_email": "blessing.ogundimu@saed.test", "title": "Cinematography & Video Production", "category": "creative_industry", "description": "Camera operation, lighting, composition and storytelling for short films.", "price": 30000, "duration_weeks": 8, "max_students": 20, "has_fast_track": True},
+    {"trainer_email": "blessing.ogundimu@saed.test", "title": "Photography for Business", "category": "creative_industry", "description": "Product photography, portrait sessions and editing for commercial clients.", "price": 25000, "duration_weeks": 6, "max_students": 25},
 
     # Emeka Uzor (Automobile)
     {"trainer_email": "emeka.uzor@saed.test", "title": "Vehicle Diagnostics & Maintenance", "category": "automobile", "description": "Engine diagnostics, brake systems, electrical checks and routine servicing.", "price": 35000, "duration_weeks": 8, "max_students": 20},
     {"trainer_email": "emeka.uzor@saed.test", "title": "Motorcycle Repair & Servicing", "category": "automobile", "description": "Complete motorcycle maintenance from engine tuning to bodywork repair.", "price": 25000, "duration_weeks": 6, "max_students": 25, "has_fast_track": True},
 
-    # Zainab Abdullahi (Food Processing)
-    {"trainer_email": "zainab.abdullahi@saed.test", "title": "Food Preservation & Packaging", "category": "food_processing", "description": "Drying, smoking, canning and modern packaging techniques for shelf-stable products.", "price": 20000, "duration_weeks": 6, "max_students": 30},
-    {"trainer_email": "zainab.abdullahi@saed.test", "title": "Baking & Confectionery", "category": "food_processing", "description": "Bread, pastries, cakes and snacks production for commercial sale.", "price": 25000, "duration_weeks": 8, "max_students": 25},
+    # Zainab Abdullahi (Culinary & Catering)
+    {"trainer_email": "zainab.abdullahi@saed.test", "title": "Food Preservation & Packaging", "category": "culinary_catering", "description": "Drying, smoking, canning and modern packaging techniques for shelf-stable products.", "price": 20000, "duration_weeks": 6, "max_students": 30},
+    {"trainer_email": "zainab.abdullahi@saed.test", "title": "Baking & Confectionery", "category": "culinary_catering", "description": "Bread, pastries, cakes and snacks production for commercial sale.", "price": 25000, "duration_weeks": 8, "max_students": 25},
 
-    # Tunde Ajayi (Power & Energy)
-    {"trainer_email": "tunde.ajayi@saed.test", "title": "Solar PV System Installation", "category": "power_energy", "description": "Site assessment, system sizing, panel mounting and inverter configuration.", "price": 40000, "duration_weeks": 6, "max_students": 20, "has_fast_track": True},
-    {"trainer_email": "tunde.ajayi@saed.test", "title": "Basic Electrical Wiring & Safety", "category": "power_energy", "description": "Residential wiring, circuit protection, earthing and electrical safety standards.", "price": 30000, "duration_weeks": 5, "max_students": 25},
+    # Tunde Ajayi (Green Energy & Satellite Security)
+    {"trainer_email": "tunde.ajayi@saed.test", "title": "Solar PV System Installation", "category": "green_energy_satellite_security", "description": "Site assessment, system sizing, panel mounting and inverter configuration.", "price": 40000, "duration_weeks": 6, "max_students": 20, "has_fast_track": True},
+    {"trainer_email": "tunde.ajayi@saed.test", "title": "Basic Electrical Wiring & Safety", "category": "green_energy_satellite_security", "description": "Residential wiring, circuit protection, earthing and electrical safety standards.", "price": 30000, "duration_weeks": 5, "max_students": 25},
 
-    # Ngozi Ekwueme (Culture & Tourism)
-    {"trainer_email": "ngozi.ekwueme@saed.test", "title": "Tourism Business Startup", "category": "culture_tourism", "description": "How to plan tours, engage visitors and build a sustainable tourism business.", "price": 22000, "duration_weeks": 4, "max_students": 35},
-    {"trainer_email": "ngozi.ekwueme@saed.test", "title": "Event Planning & Management", "category": "culture_tourism", "description": "Budgeting, vendor coordination, promotion and execution for events of all sizes.", "price": 28000, "duration_weeks": 6, "max_students": 30},
+    # Ngozi Ekwueme (Delivery & Logistics)
+    {"trainer_email": "ngozi.ekwueme@saed.test", "title": "Last-Mile Delivery Operations", "category": "delivery_logistics", "description": "Route planning, fleet management and customer service for delivery businesses.", "price": 22000, "duration_weeks": 4, "max_students": 35},
+    {"trainer_email": "ngozi.ekwueme@saed.test", "title": "Logistics Business Startup", "category": "delivery_logistics", "description": "How to set up, price and grow a logistics or courier service business.", "price": 28000, "duration_weeks": 6, "max_students": 30},
 ]
 
 

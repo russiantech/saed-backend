@@ -78,6 +78,7 @@ class DunisConfirmPaymentView(APIView):
                 subject="SAED IMS - Account Activated!",
                 message=f"Hello {user.get_full_name()},\n\nYour payment has been verified and your account has been activated.",
                 recipient_list=[user.email],
+                from_email=request.user.email,
                 html_message=(
                     f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
                     f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'

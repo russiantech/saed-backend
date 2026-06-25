@@ -13,6 +13,7 @@ from rest_framework import status
 from ..models import Connection, Course, CourseEnrollment, Notification, Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async, _notify_user,
+    _notify_admins_email,
     read_json, user_payload, trainer_payload, trainers_payload,
     course_payload, connection_payload, role_for,
     validation_error, HasRole, IsAuthenticatedAPI, IsAuthorizedTrainer,
@@ -243,6 +244,7 @@ class ConnectTrainerView(APIView):
                 subject="SAED IMS - New Connection Request",
                 message=f"Hello {trainer.get_full_name()},\n\n{cm_name} ({request.user.email}) wants to connect with you.\nPlease log in to review and approve this request.\n\nBest regards,\nNYSC SAED IMS",
                 recipient_list=[trainer.email],
+                from_email=request.user.email,
                 html_message=(
                     f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
                     f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
@@ -310,12 +312,33 @@ class ConnectionApproveView(APIView):
                 subject="SAED IMS - Connection Approved!",
                 message=f"Hello {connection.corps_member.get_full_name()},\n\nYour connection has been approved!",
                 recipient_list=[connection.corps_member.email],
+                from_email=request.user.email,
                 html_message=(
                     f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
                     f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
                     f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
                     f'<h2 style="color:#1a5f2a;margin-top:0;">Connection Approved!</h2>'
                     f'<p>Your connection with <strong>{request.user.get_full_name()}</strong> has been approved!</p></div></div>'
+                ),
+            )
+            _notify_admins_email(
+                subject=f"Connection Approved - {connection.corps_member.get_full_name()} -> {request.user.get_full_name()}",
+                message=(
+                    f"A connection has been approved.\n"
+                    f"Corps Member: {connection.corps_member.get_full_name()}\n"
+                    f"Trainer: {request.user.get_full_name()}"
+                ),
+                email_type="trainer",
+                from_email=request.user.email,
+                html_message=(
+                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                    f'<h2 style="color:#1a5f2a;margin-top:0;">Connection Approved</h2>'
+                    f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
+                    f'<tr><td style="padding:8px;font-weight:bold;">Corps Member</td><td style="padding:8px;">{connection.corps_member.get_full_name()}</td></tr>'
+                    f'<tr><td style="padding:8px;font-weight:bold;">Trainer</td><td style="padding:8px;">{request.user.get_full_name()}</td></tr>'
+                    f'</table></div></div>'
                 ),
             )
             return Response({"connection": connection_payload(connection)})
@@ -342,6 +365,40 @@ class ConnectionRejectView(APIView):
             _notify_user(connection.corps_member, "Connection Declined",
                          f"Your connection request with {request.user.get_full_name()} was declined.",
                          reason="connection_declined", created_by_role="trainer")
+            _send_email_async(
+                subject="SAED IMS - Connection Declined",
+                message=f"Hello {connection.corps_member.get_full_name()},\n\nYour connection request with {request.user.get_full_name()} has been declined.",
+                recipient_list=[connection.corps_member.email],
+                from_email=request.user.email,
+                html_message=(
+                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                    f'<div style="background:#e67e22;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                    f'<h2 style="color:#e67e22;margin-top:0;">Connection Declined</h2>'
+                    f'<p>Your connection request with <strong>{request.user.get_full_name()}</strong> has been declined.</p>'
+                    f'<p style="color:#666;font-size:13px;">You can browse other trainers from your dashboard.</p></div></div>'
+                ),
+            )
+            _notify_admins_email(
+                subject=f"Connection Declined - {connection.corps_member.get_full_name()} by {request.user.get_full_name()}",
+                message=(
+                    f"A connection request has been declined.\n"
+                    f"Corps Member: {connection.corps_member.get_full_name()}\n"
+                    f"Trainer: {request.user.get_full_name()}"
+                ),
+                email_type="trainer",
+                from_email=request.user.email,
+                html_message=(
+                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                    f'<div style="background:#e67e22;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                    f'<h2 style="color:#e67e22;margin-top:0;">Connection Declined</h2>'
+                    f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
+                    f'<tr><td style="padding:8px;font-weight:bold;">Corps Member</td><td style="padding:8px;">{connection.corps_member.get_full_name()}</td></tr>'
+                    f'<tr><td style="padding:8px;font-weight:bold;">Trainer</td><td style="padding:8px;">{request.user.get_full_name()}</td></tr>'
+                    f'</table></div></div>'
+                ),
+            )
             return Response({"connection": connection_payload(connection)})
         except Exception as exc:
             _log_error(f"Connection reject error for {connection_id}", exc=exc)

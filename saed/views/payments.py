@@ -15,6 +15,7 @@ from rest_framework import status
 from ..models import Course, CourseEnrollment, Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async, _notify_admins,
+    _notify_admins_email,
     read_json, validation_error, HasRole, IsAuthenticatedAPI,
 )
 
@@ -310,6 +311,7 @@ class TrainerConfirmEnrollmentView(APIView):
                 subject="SAED IMS - Course Enrollment Confirmed",
                 message=f"Hello {enrollment.student.get_full_name()},\n\nYour payment for \"{enrollment.course.title}\" has been confirmed.",
                 recipient_list=[enrollment.student.email],
+                from_email=request.user.email,
                 html_message=(
                     f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
                     f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
@@ -351,6 +353,7 @@ class TrainerRejectEnrollmentView(APIView):
                 subject="SAED IMS - Course Payment Not Verified",
                 message=f"Hello {enrollment.student.get_full_name()},\n\nYour payment could not be verified. A refund has been initiated.",
                 recipient_list=[enrollment.student.email],
+                from_email=request.user.email,
                 html_message=(
                     f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
                     f'<div style="background:#c0392b;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
@@ -363,6 +366,28 @@ class TrainerRejectEnrollmentView(APIView):
                 title="Refund Required",
                 message=f"Payment rejected for {enrollment.student.get_full_name()} ({enrollment.course.title}).",
                 reason="admin_update",
+            )
+            _notify_admins_email(
+                subject=f"Refund Required - {enrollment.course.title}",
+                message=(
+                    f"A payment has been rejected and a refund is required.\n"
+                    f"Student: {enrollment.student.get_full_name()}\n"
+                    f"Course: {enrollment.course.title}\n"
+                    f"Amount: {enrollment.amount_paid}"
+                ),
+                email_type="payment",
+                from_email=request.user.email,
+                html_message=(
+                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                    f'<div style="background:#c0392b;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                    f'<h2 style="color:#c0392b;margin-top:0;">Refund Required</h2>'
+                    f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
+                    f'<tr><td style="padding:8px;font-weight:bold;">Student</td><td style="padding:8px;">{enrollment.student.get_full_name()}</td></tr>'
+                    f'<tr><td style="padding:8px;font-weight:bold;">Course</td><td style="padding:8px;">{enrollment.course.title}</td></tr>'
+                    f'<tr><td style="padding:8px;font-weight:bold;">Amount</td><td style="padding:8px;">\u20a6{enrollment.amount_paid}</td></tr>'
+                    f'</table></div></div>'
+                ),
             )
             return Response({"ok": True, "message": "Enrollment rejected. Refund flagged."})
         except Exception as exc:
@@ -423,6 +448,7 @@ class AdminProcessRefundView(APIView):
                 subject="SAED IMS - Refund Processed",
                 message=f"Hello {enrollment.student.get_full_name()},\n\nYour refund of \u20a6{enrollment.amount_paid} has been processed.",
                 recipient_list=[enrollment.student.email],
+                from_email=request.user.email,
                 html_message=(
                     f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
                     f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
@@ -461,6 +487,7 @@ class AdminRejectRefundView(APIView):
                 subject="SAED IMS - Refund Denied",
                 message=f"Hello {enrollment.student.get_full_name()},\n\nYour refund request has been denied.",
                 recipient_list=[enrollment.student.email],
+                from_email=request.user.email,
                 html_message=(
                     f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
                     f'<div style="background:#c0392b;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
