@@ -92,7 +92,11 @@ class LogoutView(APIView):
 
     def post(self, request):
         try:
-            user_id = request.user.id if request.user.is_authenticated else None
+            # user_id = request.user.id if request.user.is_authenticated else None
+            user = getattr(request, "user", None)
+
+            user_id = user.id if user and user.is_authenticated else None
+
             logout(request)
             _log_info(f"User {user_id} logged out")
         except Exception as exc:
