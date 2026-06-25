@@ -1,5 +1,4 @@
 from django.urls import path
-
 from . import views
 
 
@@ -9,7 +8,7 @@ urlpatterns = [
     path("csrf/", views.csrf),
     path("auth/me/", views.me),
 
-    # Auth (DRF APIViews)
+    # Auth
     path("auth/login/", views.LoginView.as_view()),
     path("auth/logout/", views.LogoutView.as_view()),
     path("auth/signup/", views.SignupView.as_view()),
@@ -18,14 +17,12 @@ urlpatterns = [
     path("auth/verify-email/", views.EmailVerifyView.as_view()),
     path("auth/password-reset/", views.PasswordResetRequestView.as_view()),
     path("auth/password-reset/confirm/", views.PasswordResetConfirmView.as_view()),
-
-    # Profile
     path("auth/update-profile/", views.UpdateProfileView.as_view()),
 
     # Dashboard
     path("dashboard/", views.DashboardView.as_view()),
 
-    # Programs
+    # Programs & Applications
     path("programs/", views.ProgramListView.as_view()),
     path("applications/", views.ApplicationListView.as_view()),
     path("applications/create/", views.ApplicationCreateView.as_view()),
@@ -42,15 +39,16 @@ urlpatterns = [
     path("trainer/corpers/", views.MyCorpersView.as_view()),
     path("trainer/corpers/<int:corper_id>/", views.CorperProfileForTrainerView.as_view()),
 
-    # User management (admin)
+    # Admin - Users
     path("manage/users/", views.ManageUsersView.as_view()),
     path("manage/users/<int:user_id>/", views.ManageUserDetailView.as_view()),
 
-    # Program management (admin)
+    # Admin - Programs
     path("manage/programs/", views.ManageProgramsView.as_view()),
     path("manage/programs/<int:program_id>/", views.ManageProgramDetailView.as_view()),
     path("manage/programs/<int:program_id>/restrict/", views.RestrictProgramView.as_view()),
     path("manage/programs/<int:program_id>/unrestrict/", views.UnrestrictProgramView.as_view()),
+
     path("manage/applications/", views.ManageApplicationsView.as_view()),
     path("manage/applications/<int:application_id>/", views.ManageApplicationDetailView.as_view()),
 
@@ -74,9 +72,11 @@ urlpatterns = [
     path("courses/pay/", views.CoursePayInitializeView.as_view()),
     path("courses/pay/verify/", views.CoursePayVerifyView.as_view()),
     path("courses/<int:course_id>/enrollment-status/", views.CourseEnrollmentStatusView.as_view()),
+
     path("trainer/enrollments/pending/", views.TrainerPendingEnrollmentsView.as_view()),
     path("trainer/enrollments/<int:enrollment_id>/confirm/", views.TrainerConfirmEnrollmentView.as_view()),
     path("trainer/enrollments/<int:enrollment_id>/reject/", views.TrainerRejectEnrollmentView.as_view()),
+
     path("admin/refunds/pending/", views.AdminPendingRefundsView.as_view()),
     path("admin/refunds/<int:enrollment_id>/process/", views.AdminProcessRefundView.as_view()),
     path("admin/refunds/<int:enrollment_id>/reject/", views.AdminRejectRefundView.as_view()),
@@ -95,3 +95,4 @@ urlpatterns = [
     # Complaints
     path("submit-complaint/", views.SubmitComplaintView.as_view()),
 ]
+
