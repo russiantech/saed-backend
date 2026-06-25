@@ -4,6 +4,7 @@ from . import views
 
 
 urlpatterns = [
+    
     # Basic
     path("health/", views.health),
     path("csrf/", views.csrf),

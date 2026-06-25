@@ -1,11 +1,10 @@
 """
 Dashboard view.
 """
-from django.db.models import Count, Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from ..models import Application, Connection, Course, CourseEnrollment, Program, Profile
+from ..models import Application, Connection, Course, Profile
 from .base import (
     _log_error, role_for, application_payload, program_payload,
     managed_programs_for, IsAuthenticatedAPI,
