@@ -66,6 +66,13 @@ class LoginView(APIView):
             user = authenticated
 
             login(request, user)
+
+            remember = data.get("remember", False)
+            if not remember:
+                request.session.set_expiry(0)
+            else:
+                request.session.set_expiry(60 * 60 * 24 * 30)
+
             _log_info(f"User {user.id} logged in")
             return Response({"user": user_payload(user, request)})
 
