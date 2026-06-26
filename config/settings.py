@@ -167,13 +167,13 @@ CSRF_TRUSTED_ORIGINS = env_list(
 )
 # False = JS can read the cookie to send X-CSRFToken header. Must not be True.
 CSRF_COOKIE_HTTPONLY = False
-CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
 # Secure cookies require HTTPS. In dev (DEBUG=True) we must keep these False
 # or the browser silently drops them on plain HTTP.
 CSRF_COOKIE_SECURE = not DEBUG
 
 # ─── Sessions ─────────────────────────────────────────────────────────────────
-SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
 # Same rule: False in dev so the cookie is sent over plain HTTP localhost.
 SESSION_COOKIE_SECURE = not DEBUG
 # Keep sessions alive for 7 days; without this they expire when the browser closes.
