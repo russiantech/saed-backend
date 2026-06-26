@@ -23,6 +23,7 @@ from .base import (
     _log_error, _log_info, _log_warning, _send_email_async,
     _notify_admins_email, _notify_user,
     read_json, clean_email, user_payload, _safe_int, validation_error,
+    HasRole,
 )
 
 
@@ -358,13 +359,17 @@ class PasswordResetRequestView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
         try:
             user = User.objects.filter(email=email, is_active=True).first()
-            reset_payload = {}
             if user:
                 uid = urlsafe_base64_encode(force_bytes(user.pk))
                 token = default_token_generator.make_token(user)
-                reset_payload = {"uid": uid, "token": token}
-            return Response({"ok": True, "message": "If that email exists, reset instructions are available.",
-                             **reset_payload})
+                frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002")
+                reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+                _send_email_async(
+                    subject="SAED - Password Reset",
+                    message=f"Click the link to reset your password: {reset_url}",
+                    recipient_list=[user.email],
+                )
+            return Response({"ok": True, "message": "If that email exists, reset instructions were sent."})
         except Exception as exc:
             _log_error("Password reset request error", exc=exc)
             return Response({"error": "Password reset failed."},
@@ -409,8 +414,8 @@ class PasswordResetConfirmView(APIView):
 
 
 class AdminSignupView(APIView):
-    """Hidden admin signup — not linked from public UI."""
-    permission_classes = [AllowAny]
+    """Admin signup — requires existing admin authentication."""
+    permission_classes = [HasRole("saed_admin")]
 
     def post(self, request):
         data = request.data

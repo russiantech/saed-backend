@@ -137,7 +137,7 @@ def _notify_admins_email(subject, message, html_message=None,
                    extra={"subject": subject, "email_type": email_type})
 
 
-def _notify_user(user, title, message, reason="user_update", program=None):
+def _notify_user(user, title, message, reason="user_update", program=None, created_by_role=None):
     try:
         Notification.objects.create(
             user=user, title=title, message=message, reason=reason, program=program,

@@ -152,7 +152,7 @@ class ManageProgramsView(APIView):
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
-        if role_for(request.user) != "saed_admin":
+        if role_for(request.user) not in ("saed_admin", "dunis_admin"):
             return Response({"error": "Only admins can create programs."},
                             status=status.HTTP_403_FORBIDDEN)
         program, fields = _apply_program_data(None, request.data)
@@ -251,7 +251,7 @@ class ManageApplicationDetailView(APIView):
                              "fields": {"status": "Invalid application status."}},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        if application.status == "completed" and role_for(request.user) != "saed_admin":
+        if application.status == "completed" and role_for(request.user) not in ("saed_admin", "dunis_admin"):
             return Response({"error": "Only admins can change the status of a completed application.",
                              "fields": {"status": "Completed applications can only be modified by an admin."}},
                             status=status.HTTP_400_BAD_REQUEST)
