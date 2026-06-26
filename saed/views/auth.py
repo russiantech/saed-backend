@@ -27,6 +27,7 @@ from .base import (
 
 
 class LoginView(APIView):
+    
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -68,9 +69,8 @@ class LoginView(APIView):
             return Response({"user": user_payload(user, request)})
 
         except Exception as exc:
-            _log_error("Login error", exc=exc, extra={"login_id": login_id})
-            return Response({"error": "Login failed. Please try again."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            _log_error("Login error", exc=exc, extra={"login_id": login_id}) 
+            return Response({"error": "Login failed. Please try again."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class LogoutView(APIView):
@@ -78,7 +78,11 @@ class LogoutView(APIView):
 
     def post(self, request):
         try:
-            user_id = request.user.id if request.user.is_authenticated else None
+            # user_id = request.user.id if request.user.is_authenticated else None
+            user = getattr(request, "user", None)
+
+            user_id = user.id if user and user.is_authenticated else None
+
             logout(request)
             _log_info(f"User {user_id} logged out")
         except Exception as exc:
