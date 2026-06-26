@@ -21,7 +21,7 @@ class DunisPendingPaymentsView(APIView):
         try:
             profiles = Profile.objects.filter(
                 role="trainer", is_authorized=True, has_paid=False
-            ).select_related("user")
+            ).exclude(is_hidden=True).select_related("user")
             result = []
             for p in profiles:
                 result.append({
@@ -100,7 +100,7 @@ class DunisAllTrainersView(APIView):
 
     def get(self, request):
         try:
-            profiles = Profile.objects.filter(role="trainer").select_related("user").order_by(
+            profiles = Profile.objects.filter(role="trainer").exclude(is_hidden=True).select_related("user").order_by(
                 "user__first_name"
             )
             result = []

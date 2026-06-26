@@ -72,6 +72,7 @@ class Profile(models.Model):
         related_name="restricted_profiles",
     )
     restricted_at = models.DateTimeField(null=True, blank=True)
+    is_hidden = models.BooleanField(default=False)
     updated_at = models.DateTimeField(auto_now=True)
     profile_picture = models.ImageField(upload_to="profile_pictures/", blank=True)
 

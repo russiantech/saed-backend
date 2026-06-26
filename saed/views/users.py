@@ -26,7 +26,7 @@ class ManageUsersView(APIView):
 
     def get(self, request):
         try:
-            users = User.objects.select_related("profile").order_by("first_name", "email")
+            users = User.objects.select_related("profile").exclude(profile__is_hidden=True).order_by("first_name", "email")
             if role_for(request.user) == "saed_admin":
                 users = users.exclude(
                     profile__authorization_status="restricted",

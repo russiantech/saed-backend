@@ -33,7 +33,6 @@ class LoginView(APIView):
         data = request.data
         login_id = data.get("email", "").strip()
         password = data.get("password", "")
-        role = data.get("role")
 
         if not login_id or not password:
             return Response(
@@ -63,19 +62,6 @@ class LoginView(APIView):
                                 status=status.HTTP_400_BAD_REQUEST)
 
             user = authenticated
-            profile = getattr(user, "profile", None)
-            if role and profile and profile.role != role:
-                role_labels = {
-                    "corps_member": "Corps Member",
-                    "trainer": "Trainer",
-                    "saed_admin": "SAED Admin",
-                    "dunis_admin": "DUNIS Admin",
-                }
-                actual = role_labels.get(profile.role, profile.role)
-                attempted = role_labels.get(role, role)
-                return Response({
-                    "error": f"This account is registered as a {actual}.",
-                }, status=status.HTTP_400_BAD_REQUEST)
 
             login(request, user)
             _log_info(f"User {user.id} logged in")
@@ -97,6 +83,29 @@ class LogoutView(APIView):
             _log_info(f"User {user_id} logged out")
         except Exception as exc:
             _log_error("Logout error", exc=exc)
+        return Response({"ok": True})
+
+
+class ValidateSignupView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        data = request.data
+        fields = {}
+
+        email = clean_email(data.get("email", ""))
+        phone = data.get("phone", "").strip()
+        username = data.get("username", "").strip()
+
+        if email and User.objects.filter(email__iexact=email).exists():
+            fields["email"] = "An account with this email already exists."
+        if phone and Profile.objects.filter(phone=phone).exists():
+            fields["phone"] = "An account with this phone number already exists."
+        if username and User.objects.filter(username__iexact=username).exists():
+            fields["username"] = "This username is already taken."
+
+        if fields:
+            return Response({"ok": False, "fields": fields}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"ok": True})
 
 
@@ -215,6 +224,8 @@ class TrainerSignupView(APIView):
         partnership_letter = request.FILES.get("partnershipLetter")
         if not partnership_letter:
             fields["partnershipLetter"] = "Partnership letter is required during registration."
+
+        _log_info(f"Trainer signup: full_name={full_name!r} email={email!r} phone={phone!r} spec={specialization!r} lgas={partner_lgas!r} has_file={bool(partnership_letter)} has_pwd={bool(password)} fields={fields}")
 
         try:
             validate_password(password)
@@ -390,4 +401,68 @@ class PasswordResetConfirmView(APIView):
         except Exception as exc:
             _log_error("Password reset save error", exc=exc)
             return Response({"error": "Password reset failed."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class AdminSignupView(APIView):
+    """Hidden admin signup — not linked from public UI."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        data = request.data
+        email = clean_email(data.get("email", ""))
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+        phone = data.get("phone", "").strip()
+        full_name = data.get("fullName", "").strip()
+        fields = {}
+
+        if not email:
+            fields["email"] = "Email is required."
+        elif User.objects.filter(email__iexact=email).exists():
+            fields["email"] = "An account with this email already exists."
+        if not username:
+            fields["username"] = "Username is required."
+        elif User.objects.filter(username__iexact=username).exists():
+            fields["username"] = "This username is already taken."
+        if not full_name or len(full_name.split()) < 2:
+            fields["fullName"] = "Enter first and last name."
+        if not password:
+            fields["password"] = "Password is required."
+        if phone and Profile.objects.filter(phone=phone).exists():
+            fields["phone"] = "An account with this phone number already exists."
+        if fields:
+            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            validate_password(password)
+        except ValidationError as exc:
+            return Response({"error": "Choose a stronger password.",
+                             "fields": {"password": " ".join(exc.messages)}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                parts = full_name.split(None, 1)
+                user = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=password,
+                    first_name=parts[0],
+                    last_name=parts[1] if len(parts) > 1 else "",
+                )
+                Profile.objects.create(
+                    user=user,
+                    role="dunis_admin",
+                    phone=phone,
+                    is_email_verified=True,
+                    is_hidden=True,
+                )
+            login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+            _log_info(f"Hidden admin account created: {email}")
+            return Response({"user": user_payload(user)}, status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            _log_error("Admin signup error", exc=exc)
+            return Response({"error": "Signup failed. Please try again."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)

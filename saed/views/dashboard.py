@@ -43,21 +43,21 @@ class DashboardView(APIView):
                 payload["trainerPrograms"] = [program_payload(p) for p in trainer_programs[:4]]
 
             elif user_role == "saed_admin":
-                trainer_profiles = Profile.objects.filter(role="trainer")
+                trainer_profiles = Profile.objects.filter(role="trainer").exclude(is_hidden=True)
                 payload["stats"] = {
                     "totalTrainers": trainer_profiles.count(),
                     "approvedTrainers": trainer_profiles.filter(is_authorized=True).count(),
                     "pendingTrainers": trainer_profiles.filter(authorization_status="pending").count(),
                     "declinedTrainers": trainer_profiles.filter(authorization_status="declined").count(),
                     "removedTrainers": trainer_profiles.filter(authorization_status="removed").count(),
-                    "totalCorpers": Profile.objects.filter(role="corps_member").count(),
+                    "totalCorpers": Profile.objects.filter(role="corps_member").exclude(is_hidden=True).count(),
                     "totalConnections": Connection.objects.count(),
                     "totalCourses": Course.objects.filter(is_active=True).count(),
                 }
                 payload["partnerStats"] = payload["stats"]
 
             elif user_role == "dunis_admin":
-                trainer_profiles = Profile.objects.filter(role="trainer")
+                trainer_profiles = Profile.objects.filter(role="trainer").exclude(is_hidden=True)
                 pending_payments = trainer_profiles.filter(is_authorized=True, has_paid=False).count()
                 fast_track_enabled = trainer_profiles.filter(can_upload_fast_track=True).count()
                 payload["stats"] = {
@@ -69,7 +69,7 @@ class DashboardView(APIView):
                     "paidTrainers": trainer_profiles.filter(has_paid=True).count(),
                     "pendingPayments": pending_payments,
                     "fastTrackEnabled": fast_track_enabled,
-                    "totalCorpers": Profile.objects.filter(role="corps_member").count(),
+                    "totalCorpers": Profile.objects.filter(role="corps_member").exclude(is_hidden=True).count(),
                     "totalConnections": Connection.objects.count(),
                     "totalCourses": Course.objects.filter(is_active=True).count(),
                 }

@@ -31,7 +31,7 @@ class AvailableTrainersView(APIView):
             query = skill or specialization
             trainers = Profile.objects.filter(
                 role="trainer", is_authorized=True, user__is_active=True
-            ).select_related("user")
+            ).exclude(is_hidden=True).select_related("user")
             if query:
                 trainers = trainers.filter(specialization__icontains=query)
             result = []
