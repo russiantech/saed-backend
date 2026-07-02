@@ -2,6 +2,7 @@
 Notification views.
 """
 from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from ..models import Notification
@@ -9,9 +10,11 @@ from .base import _log_error, _log_info, IsAuthenticatedAPI, role_for
 
 
 class NotificationListView(APIView):
-    permission_classes = [IsAuthenticatedAPI]
+    permission_classes = [AllowAny]
 
     def get(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return Response({"notifications": [], "unreadCount": 0})
         try:
             notifications = Notification.objects.filter(
                 user=request.user
