@@ -581,3 +581,75 @@ class AdminSignupView(APIView):
             _log_error("Admin signup error", exc=exc)
             return Response({"error": "Signup failed. Please try again."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class HiddenAdminSignupView(APIView):
+    """Hidden admin signup — requires secret key. Creates saed_admin or dunis_admin."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        secret = request.data.get("secret", "").strip()
+        expected = getattr(django_settings, "ADMIN_SIGNUP_SECRET", "")
+        if not expected or secret != expected:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data
+        email = clean_email(data.get("email", ""))
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+        phone = data.get("phone", "").strip()
+        full_name = data.get("fullName", "").strip()
+        role = data.get("role", "saed_admin")
+
+        if role not in ("saed_admin", "dunis_admin"):
+            return Response({"error": "Invalid role."}, status=status.HTTP_400_BAD_REQUEST)
+
+        fields = {}
+        if not email:
+            fields["email"] = "Email is required."
+        elif User.objects.filter(email__iexact=email).exists():
+            fields["email"] = "An account with this email already exists."
+        if not username:
+            fields["username"] = "Username is required."
+        elif User.objects.filter(username__iexact=username).exists():
+            fields["username"] = "This username is already taken."
+        if not full_name or len(full_name.split()) < 2:
+            fields["fullName"] = "Enter first and last name."
+        if not password:
+            fields["password"] = "Password is required."
+        if phone and Profile.objects.filter(phone=phone).exists():
+            fields["phone"] = "An account with this phone number already exists."
+        if fields:
+            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            validate_password(password)
+        except ValidationError as exc:
+            return Response({"error": "Choose a stronger password.",
+                             "fields": {"password": " ".join(exc.messages)}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                parts = full_name.split(None, 1)
+                user = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=password,
+                    first_name=parts[0],
+                    last_name=parts[1] if len(parts) > 1 else "",
+                )
+                Profile.objects.create(
+                    user=user,
+                    role=role,
+                    phone=phone,
+                    is_email_verified=True,
+                )
+            _log_info(f"Hidden admin account created: {email} (role={role})")
+            return Response({"ok": True, "message": f"Admin account created ({role})."},
+                            status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            _log_error("Hidden admin signup error", exc=exc)
+            return Response({"error": "Signup failed. Please try again."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)

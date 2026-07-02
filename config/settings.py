@@ -203,6 +203,9 @@ PAYSTACK_PUBLIC_KEY = os.getenv("PAYSTACK_PUBLIC_KEY", "")
 PAYSTACK_API_URL = os.getenv("PAYSTACK_API_URL", "https://api.paystack.co")
 PAYSTACK_DEFAULT_AMOUNT = int(os.getenv("PAYSTACK_DEFAULT_AMOUNT", "50000"))
 
+# Secret key required for hidden admin signup endpoint
+ADMIN_SIGNUP_SECRET = os.getenv("ADMIN_SIGNUP_SECRET", "")
+
 # Prevents SMTP from hanging requests
 EMAIL_TIMEOUT = 5
 

