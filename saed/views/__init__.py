@@ -40,7 +40,7 @@ def me(request):
 from .auth import (
     LoginView, LogoutView, SignupView, ValidateSignupView, TrainerSignupView, AdminSignupView,
     EmailVerifyView, ResendVerificationView,
-    PasswordResetRequestView, PasswordResetConfirmView,
+    PasswordResetRequestView, VerifyResetCodeView, ResetPasswordView,
 )
 
 # Profile

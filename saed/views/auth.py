@@ -404,6 +404,7 @@ class ResendVerificationView(APIView):
 
 
 class PasswordResetRequestView(APIView):
+    """Step 1: Send 6-digit code to email, return token."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -414,57 +415,106 @@ class PasswordResetRequestView(APIView):
                              "fields": {"email": "Use a valid email address."}},
                             status=status.HTTP_400_BAD_REQUEST)
         try:
-            user = User.objects.filter(email=email, is_active=True).first()
+            user = User.objects.filter(email__iexact=email, is_active=True).first()
             if user:
-                uid = urlsafe_base64_encode(force_bytes(user.pk))
-                token = default_token_generator.make_token(user)
-                frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002")
-                reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+                code = get_random_string(6, allowed_chars="0123456789")
+                token = get_random_string(64)
+                profile = Profile.objects.filter(user=user).first()
+                if profile:
+                    profile.password_reset_token = token
+                    profile.password_reset_code = code
+                    profile.save(update_fields=["password_reset_token", "password_reset_code"])
                 _send_email_async(
-                    subject="SAED - Password Reset",
-                    message=f"Click the link to reset your password: {reset_url}",
+                    subject="SAED - Password Reset Code",
+                    message=f"Your password reset code is: {code}",
                     recipient_list=[user.email],
+                    html_message=(
+                        f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                        f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
+                        f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
+                        f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                        f'<h2 style="color:#1a5f2a;margin-top:0;">Password Reset Code</h2>'
+                        f'<p>Hello <strong>{user.get_full_name() or user.username}</strong>,</p>'
+                        f'<p>Your password reset code is:</p>'
+                        f'<p style="text-align:center;margin:30px 0;"><span style="font-size:32px;letter-spacing:8px;font-weight:bold;color:#1a5f2a;">{code}</span></p>'
+                        f'<p style="color:#666;font-size:13px;">This code expires in 15 minutes. If you did not request a reset, ignore this email.</p></div>'
+                        f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
+                    ),
                 )
-            return Response({"ok": True, "message": "If that email exists, reset instructions were sent."})
+            return Response({"ok": True, "token": token if user else get_random_string(64),
+                             "message": "If that email exists, a reset code was sent."})
         except Exception as exc:
             _log_error("Password reset request error", exc=exc)
             return Response({"error": "Password reset failed."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class PasswordResetConfirmView(APIView):
+class VerifyResetCodeView(APIView):
+    """Step 2: Verify the 6-digit code."""
     permission_classes = [AllowAny]
 
     def post(self, request):
         data = request.data
-        uid = data.get("uid", "")
-        token = data.get("token", "")
+        email = clean_email(data.get("email", ""))
+        code = data.get("code", "").strip()
+        token = data.get("token", "").strip()
+
+        if not email or not code or not token:
+            return Response({"error": "Email, code, and token are required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.filter(email__iexact=email, is_active=True).first()
+            if not user:
+                return Response({"error": "Invalid code."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            profile = Profile.objects.filter(user=user, password_reset_token=token, password_reset_code=code).first()
+            if not profile:
+                return Response({"error": "Invalid or expired code."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            return Response({"ok": True, "message": "Code verified."})
+        except Exception as exc:
+            _log_error("Verify reset code error", exc=exc)
+            return Response({"error": "Verification failed."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ResetPasswordView(APIView):
+    """Step 3: Set new password."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        data = request.data
+        email = clean_email(data.get("email", ""))
+        token = data.get("token", "").strip()
+        code = data.get("code", "").strip()
         password = data.get("password", "")
 
-        try:
-            user_id = force_str(urlsafe_base64_decode(uid))
-            user = User.objects.get(pk=user_id, is_active=True)
-        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
-            user = None
-
-        if user is None or not default_token_generator.check_token(user, token):
-            return Response({"error": "This password reset link is invalid or has expired.",
-                             "fields": {"token": "Request a new reset link."}},
+        if not email or not token or not code or not password:
+            return Response({"error": "All fields are required."},
                             status=status.HTTP_400_BAD_REQUEST)
-
         try:
-            validate_password(password, user)
-        except ValidationError as exc:
-            return Response({"error": "Choose a stronger password.",
-                             "fields": {"password": " ".join(exc.messages)}},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        try:
+            user = User.objects.filter(email__iexact=email, is_active=True).first()
+            if not user:
+                return Response({"error": "Invalid request."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            profile = Profile.objects.filter(user=user, password_reset_token=token, password_reset_code=code).first()
+            if not profile:
+                return Response({"error": "Invalid or expired reset request."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            try:
+                validate_password(password, user)
+            except ValidationError as exc:
+                return Response({"error": "Choose a stronger password.",
+                                 "fields": {"password": " ".join(exc.messages)}},
+                                status=status.HTTP_400_BAD_REQUEST)
             user.set_password(password)
             user.save(update_fields=["password"])
-            return Response({"ok": True})
+            profile.password_reset_token = ""
+            profile.password_reset_code = ""
+            profile.save(update_fields=["password_reset_token", "password_reset_code"])
+            return Response({"ok": True, "message": "Password reset successfully."})
         except Exception as exc:
-            _log_error("Password reset save error", exc=exc)
+            _log_error("Password reset error", exc=exc)
             return Response({"error": "Password reset failed."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

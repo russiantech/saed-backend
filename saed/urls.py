@@ -18,8 +18,11 @@ urlpatterns = [
     path("auth/email-verify/", views.EmailVerifyView.as_view()),
     path("auth/verify-email/", views.EmailVerifyView.as_view()),
     path("auth/resend-verification/", views.ResendVerificationView.as_view()),
+    path("auth/forgot-password/", views.PasswordResetRequestView.as_view()),
+    path("auth/verify-reset-code/", views.VerifyResetCodeView.as_view()),
+    path("auth/reset-password/", views.ResetPasswordView.as_view()),
     path("auth/password-reset/", views.PasswordResetRequestView.as_view()),
-    path("auth/password-reset/confirm/", views.PasswordResetConfirmView.as_view()),
+    path("auth/password-reset/confirm/", views.ResetPasswordView.as_view()),
     path("auth/update-profile/", views.UpdateProfileView.as_view()),
 
     # Dashboard
