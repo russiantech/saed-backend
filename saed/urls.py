@@ -17,6 +17,7 @@ urlpatterns = [
     path("auth/admin-signup/", views.AdminSignupView.as_view()),
     path("auth/email-verify/", views.EmailVerifyView.as_view()),
     path("auth/verify-email/", views.EmailVerifyView.as_view()),
+    path("auth/resend-verification/", views.ResendVerificationView.as_view()),
     path("auth/password-reset/", views.PasswordResetRequestView.as_view()),
     path("auth/password-reset/confirm/", views.PasswordResetConfirmView.as_view()),
     path("auth/update-profile/", views.UpdateProfileView.as_view()),
@@ -55,6 +56,7 @@ urlpatterns = [
     path("manage/applications/<int:application_id>/", views.ManageApplicationDetailView.as_view()),
 
     # Courses
+    path("courses/", views.CourseListView.as_view()),
     path("manage/courses/", views.ManageCoursesView.as_view()),
     path("manage/courses/<int:course_id>/", views.ManageCourseDetailView.as_view()),
     path("admin/courses/", views.AdminCoursesView.as_view()),

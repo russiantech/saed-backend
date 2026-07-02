@@ -39,7 +39,8 @@ def me(request):
 # Auth views (DRF APIViews)
 from .auth import (
     LoginView, LogoutView, SignupView, ValidateSignupView, TrainerSignupView, AdminSignupView,
-    EmailVerifyView, PasswordResetRequestView, PasswordResetConfirmView,
+    EmailVerifyView, ResendVerificationView,
+    PasswordResetRequestView, PasswordResetConfirmView,
 )
 
 # Profile
@@ -58,7 +59,7 @@ from .users import ManageUsersView, ManageUserDetailView
 
 # Courses
 from .courses import (
-    ManageCoursesView, ManageCourseDetailView,
+    CourseListView, ManageCoursesView, ManageCourseDetailView,
     AdminCoursesView, RestrictCourseView, UnrestrictCourseView,
     CourseDetailView,
 )

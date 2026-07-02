@@ -6,6 +6,7 @@ from django.conf import settings as django_settings
 from django.db import transaction
 from django.utils.timezone import now
 from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
@@ -16,6 +17,21 @@ from .base import (
     course_payload, fast_track_video_payload, role_for,
     validation_error, HasRole, IsAuthenticatedAPI,
 )
+
+class CourseListView(APIView):
+    """Public course catalog — lists active, non-restricted courses."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        try:
+            courses = Course.objects.select_related("trainer", "trainer__profile").filter(
+                is_active=True, is_restricted=False
+            ).order_by("-created_at")
+            return Response({"courses": [course_payload(c) for c in courses]})
+        except Exception as exc:
+            _log_error("Course list error", exc=exc)
+            return Response({"error": "Failed to load courses."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ManageCoursesView(APIView):
