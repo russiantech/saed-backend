@@ -436,6 +436,7 @@ SEED_ADMINS = [
         "authorization_status": "approved",
         "is_email_verified": True,
     },
+    
     {
         "username": "dunis_admin",
         "email": "dunis.admin@example.com",
