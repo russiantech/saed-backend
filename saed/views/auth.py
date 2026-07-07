@@ -6,11 +6,8 @@ import json
 from django.conf import settings as django_settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.password_validation import validate_password
-from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth.models import User
 from django.utils.crypto import get_random_string
-from django.utils.encoding import force_str, force_bytes
-from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.db import IntegrityError, transaction
 from django.core.exceptions import ValidationError
 from rest_framework.views import APIView
@@ -21,7 +18,7 @@ from rest_framework import status
 from ..models import Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async,
-    _notify_admins_email, _notify_user,
+    _notify_admins, _notify_admins_email, _notify_user,
     read_json, clean_email, user_payload, _safe_int, validation_error,
     HasRole,
 )
@@ -64,6 +61,16 @@ class LoginView(APIView):
                                 status=status.HTTP_400_BAD_REQUEST)
 
             user = authenticated
+
+            profile = getattr(user, "profile", None)
+            if profile and not profile.is_email_verified:
+                _log_warning(f"Login blocked: unverified email for user {user.id}")
+                return Response(
+                    {"error": "Please verify your email address before logging in.",
+                     "email_not_verified": True,
+                     "email": user.email},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
             login(request, user)
 
@@ -178,6 +185,7 @@ class SignupView(APIView):
                              "fields": {"email": "Email is already registered."}},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        verification_token = get_random_string(64)
         Profile.objects.create(
             user=user, role=role,
             phone=data.get("phone", "").strip(),
@@ -187,7 +195,61 @@ class SignupView(APIView):
             lga_of_deployment=data.get("lgaOfDeployment", "").strip(),
             skill_interest=data.get("skillInterest", "").strip(),
             skill_interests=data.get("skillInterests", []),
+            email_verification_token=verification_token,
         )
+
+        frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3002')
+        verify_url = f"{frontend_url}/verify-email?token={verification_token}"
+
+        _send_email_async(
+            subject="Verify your SAED IMS email address",
+            message=f"Hello {full_name},\n\nVerify your email: {verify_url}\n\nBest regards,\nNYSC SAED IMS",
+            recipient_list=[email],
+            html_message=(
+                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
+                f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
+                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
+                f'<p>Hello <strong>{full_name}</strong>,</p>'
+                f'<p>Please verify your email address by clicking the button below:</p>'
+                f'<p style="text-align:center;margin:30px 0;">'
+                f'<a href="{verify_url}" style="background:#1a5f2a;color:#fff;padding:14px 32px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">Verify Email</a></p>'
+                f'<p style="color:#666;font-size:13px;">If you did not create this account, please ignore this email.</p></div>'
+                f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
+            ),
+        )
+
+        _notify_admins(
+            title="New Corps Member Registration",
+            message=f"{full_name} ({email}) has registered as a corps member.",
+            reason="admin_update",
+        )
+
+        _notify_admins_email(
+            subject=f"New Corps Member Registration: {full_name}",
+            message=(
+                f"A new corps member has registered.\n"
+                f"Name: {full_name}\nEmail: {email}\n"
+                f"Phone: {data.get('phone', '').strip()}\n"
+                f"State Code: {data.get('nyscStateCode', '').strip()}"
+            ),
+            email_type="general",
+            html_message=(
+                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
+                f'<h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                f'<h2 style="color:#1a5f2a;margin-top:0;">New Corps Member Registration</h2>'
+                f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
+                f'<tr><td style="padding:8px;font-weight:bold;">Name</td><td style="padding:8px;">{full_name}</td></tr>'
+                f'<tr><td style="padding:8px;font-weight:bold;">Email</td><td style="padding:8px;">{email}</td></tr>'
+                f'<tr><td style="padding:8px;font-weight:bold;">Phone</td><td style="padding:8px;">{data.get("phone", "").strip()}</td></tr>'
+                f'<tr><td style="padding:8px;font-weight:bold;">State Code</td><td style="padding:8px;">{data.get("nyscStateCode", "").strip()}</td></tr>'
+                f'</table></div></div>'
+            ),
+        )
+
         login(request, user)
         return Response({"user": user_payload(user, request)}, status=status.HTTP_201_CREATED)
 

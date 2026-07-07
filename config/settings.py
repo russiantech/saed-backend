@@ -171,15 +171,24 @@ CSRF_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
 # Secure cookies require HTTPS. In dev (DEBUG=True) we must keep these False
 # or the browser silently drops them on plain HTTP.
 CSRF_COOKIE_SECURE = not DEBUG
+# Set cookie domain for cross-origin deployments (e.g. .dunistech.ng)
+# Override via .env: CSRF_COOKIE_DOMAIN=.dunistech.ng
+CSRF_COOKIE_DOMAIN = os.getenv("CSRF_COOKIE_DOMAIN", None)
 
 # ─── Sessions ─────────────────────────────────────────────────────────────────
 SESSION_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
 # Same rule: False in dev so the cookie is sent over plain HTTP localhost.
 SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_HTTPONLY = True
 # Keep sessions alive for 7 days; without this they expire when the browser closes.
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 7
 # Only write the session back to the DB when something actually changed.
 SESSION_SAVE_EVERY_REQUEST = False
+# Ensure session persists across browser restarts (respects SESSION_COOKIE_AGE)
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+# Set cookie domain for cross-origin deployments (e.g. .dunistech.ng)
+# Override via .env: SESSION_COOKIE_DOMAIN=.dunistech.ng
+SESSION_COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN", None)
 
 # ─── HTTPS / HSTS (production only) ───────────────────────────────────────────
 SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not DEBUG)

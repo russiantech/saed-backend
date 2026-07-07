@@ -2,13 +2,9 @@
 User management views (admin).
 """
 
-import json
 from django.contrib.auth.models import User
-from django.contrib.auth.password_validation import validate_password
-from django.utils.crypto import get_random_string
 from django.utils.timezone import now
-from django.db import IntegrityError, transaction
-from django.core.exceptions import ValidationError
+from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -39,72 +35,10 @@ class ManageUsersView(APIView):
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
-        if request.content_type and "multipart/form-data" in request.content_type:
-            data = request.POST
-        else:
-            data = request.data
-
-        full_name = data.get("fullName", "").strip()
-        email = clean_email(data.get("email", ""))
-        role = data.get("role", "trainer")
-        password = data.get("password", "")
-        fields = {}
-
-        if len(full_name.split()) < 2:
-            fields["fullName"] = "Enter first and last name."
-        if not email:
-            fields["email"] = "Enter a valid email address."
-        elif User.objects.filter(email__iexact=email).exists():
-            fields["email"] = "An account with this email already exists."
-        phone = data.get("phone", "").strip()
-        if phone and Profile.objects.filter(phone=phone).exists():
-            fields["phone"] = "An account with this phone number already exists."
-        if role != "trainer":
-            fields["role"] = "Admins can create trainer accounts only."
-        if password:
-            try:
-                validate_password(password)
-            except ValidationError as exc:
-                fields["password"] = " ".join(exc.messages)
-
-        if fields:
-            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            with transaction.atomic():
-                user = User.objects.create_user(
-                    username=email, email=email,
-                    password=password or get_random_string(20),
-                    first_name=full_name.split(" ", 1)[0],
-                    last_name=full_name.split(" ", 1)[1] if " " in full_name else "",
-                )
-                Profile.objects.create(
-                    user=user, role="trainer",
-                    phone=data.get("phone", "").strip(),
-                    specialization=data.get("specialization", "").strip(),
-                    years_experience=_safe_int(data.get("yearsExperience", 0), 0),
-                    company_name=data.get("companyName", "").strip(),
-                    bio=data.get("bio", "").strip(),
-                    number_trained=_safe_int(data.get("numberTrained", 0), 0),
-                    partner_lgas=json.loads(data.get("partnerLgas", "[]"))
-                        if isinstance(data.get("partnerLgas"), str)
-                        else data.get("partnerLgas", []),
-                    is_authorized=True,
-                )
-                partnership_letter = request.FILES.get("partnershipLetter")
-                if partnership_letter:
-                    user.profile.partnership_letter = partnership_letter
-                    user.profile.save(update_fields=["partnership_letter"])
-                return Response({"user": user_payload(user)}, status=status.HTTP_201_CREATED)
-        except IntegrityError:
-            return Response({"error": "An account with this email already exists.",
-                             "fields": {"email": "Email is already registered."}},
-                            status=status.HTTP_400_BAD_REQUEST)
-        except Exception as exc:
-            _log_error("Admin user creation error", exc=exc)
-            return Response({"error": "User creation failed."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(
+            {"error": "Creating trainers via admin is disabled. Trainers must register through the public signup form."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
 
 class ManageUserDetailView(APIView):

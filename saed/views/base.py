@@ -254,8 +254,16 @@ def HasRole(*roles):
     class _HasRole(BasePermission):
         def has_permission(self, request, view):
             if not (request.user and request.user.is_authenticated):
+                _log_warning(f"HasRole({roles}): unauthenticated request to {request.path}")
                 return False
-            return role_for(request.user) in roles
+            user_role = role_for(request.user)
+            if user_role not in roles:
+                _log_warning(
+                    f"HasRole({roles}): user {request.user.id} has role '{user_role}', "
+                    f"denied access to {request.path}"
+                )
+                return False
+            return True
     _HasRole.__name__ = f"HasRole_{'_'.join(roles)}"
     return _HasRole
 
