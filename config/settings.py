@@ -224,6 +224,11 @@ EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "noreply@saed-ims.com")
 MD_EMAIL = os.getenv("MD_EMAIL", "")
+
+# CRITICAL: Unset these to prevent Django from passing them to starttls()
+EMAIL_SSL_KEYFILE = None
+EMAIL_SSL_CERTFILE = None
+
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3001")
 
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "")
