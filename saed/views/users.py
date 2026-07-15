@@ -20,6 +20,19 @@ from .base import (
 class ManageUsersView(APIView):
     permission_classes = [HasRole("saed_admin", "dunis_admin")]
 
+    # def get(self, request):
+    #     try:
+    #         users = User.objects.select_related("profile").exclude(profile__is_hidden=True).order_by("first_name", "email")
+    #         if role_for(request.user) == "saed_admin":
+    #             users = users.exclude(
+    #                 profile__authorization_status="restricted",
+    #                 profile__restricted_by__profile__role="dunis_admin"
+    #             )
+    #         return Response({"users": [user_payload(u) for u in users]})
+    #     except Exception as exc:
+    #         _log_error("User list error", exc=exc)
+    #         return Response({"error": "Failed to load users."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     def get(self, request):
         try:
             users = User.objects.select_related("profile").exclude(profile__is_hidden=True).order_by("first_name", "email")
@@ -28,17 +41,17 @@ class ManageUsersView(APIView):
                     profile__authorization_status="restricted",
                     profile__restricted_by__profile__role="dunis_admin"
                 )
-            return Response({"users": [user_payload(u) for u in users]})
+            return Response({"users": [user_payload(u, request) for u in users]})  # ← add request
         except Exception as exc:
             _log_error("User list error", exc=exc)
-            return Response({"error": "Failed to load users."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": "Failed to load users."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
         return Response(
             {"error": "Creating trainers via admin is disabled. Trainers must register through the public signup form."},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
+
 
 
 class ManageUserDetailView(APIView):

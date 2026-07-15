@@ -166,6 +166,7 @@ CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:3002,http://127.0.0.1:3002",
 )
+
 # Required for fetch(..., credentials:"include") to work cross-origin.
 # Never combine with CORS_ALLOW_ALL_ORIGINS=True — browsers reject that.
 CORS_ALLOW_CREDENTIALS = True

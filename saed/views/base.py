@@ -1,3 +1,4 @@
+# saed/views/base.py
 """
 Shared helpers, decorators, utilities, constants, and payload builders.
 """
@@ -321,6 +322,13 @@ def _media_url(path, request=None):
         return f"{request.scheme}://{request.get_host()}{django_settings.MEDIA_URL}{path}"
     return f"{django_settings.MEDIA_URL}{path}"
 
+
+# def _media_url(path, request=None):
+#     if not path:
+#         return None
+#     if request:
+#         return f"{request.scheme}://{request.get_host()}{django_settings.MEDIA_URL}{path}"
+#     return f"{django_settings.MEDIA_URL}{path}"  # ← falls back to relative path
 
 def user_payload(user, request=None):
     profile = getattr(user, "profile", None)
