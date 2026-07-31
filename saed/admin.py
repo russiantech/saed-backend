@@ -181,3 +181,4 @@ class ApplicationAdmin(admin.ModelAdmin):
         if obj and getattr(obj, "status", None) == "completed":
             readonly.append("status")
         return readonly
+

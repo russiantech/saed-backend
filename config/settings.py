@@ -209,6 +209,9 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 # Override via .env: SESSION_COOKIE_DOMAIN=.dunistech.ng
 SESSION_COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN", None)
 
+# # Store CSRF in its own cookie, not in the session.
+# # This way a stale sessionid won't break CSRF validation.
+CSRF_USE_SESSIONS=False
 
 # ─── HTTPS / HSTS (production only) ───────────────────────────────────────────
 SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not DEBUG)

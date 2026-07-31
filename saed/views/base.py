@@ -47,15 +47,21 @@ def _log_warning(msg, extra=None):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ASYNC EMAIL
 # ═══════════════════════════════════════════════════════════════════════════════
-def _send_email_async(subject, message, recipient_list, from_email=None,
-                      fail_silently=False, html_message=None):
+def _send_email_async(
+    subject, message, 
+    recipient_list, 
+    from_email=None,
+    fail_silently=False, 
+    html_message=None
+    ):
+    
     def _send():
         try:
             send_mail(
                 subject=subject,
                 message=message,
                 from_email=from_email or getattr(
-                    django_settings, "DEFAULT_FROM_EMAIL", "noreply@saed-ims.com"
+                    django_settings, "DEFAULT_FROM_EMAIL", "noreply@saed-ims.ng"
                 ),
                 recipient_list=recipient_list,
                 fail_silently=fail_silently,
