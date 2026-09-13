@@ -2,7 +2,6 @@
 Course views (trainer CRUD, admin).
 """
 
-from django.conf import settings as django_settings
 from django.db import transaction
 from django.utils.timezone import now
 from rest_framework.views import APIView
@@ -10,12 +9,12 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Course, CourseEnrollment, FastTrackVideo
+from ..models import Course, FastTrackVideo
 from .base import (
-    _log_error, _log_info, _log_warning, _notify_user,
-    read_json, _safe_float, _resolve_course_dates, _parse_date,
-    course_payload, fast_track_video_payload, role_for,
-    validation_error, HasRole, IsAuthenticatedAPI,
+    _log_error, _notify_user,
+    _safe_float, _resolve_course_dates, _parse_date,
+    course_payload, role_for,
+    HasRole, IsAuthenticatedAPI,
 )
 
 class CourseListView(APIView):
@@ -143,8 +142,7 @@ class AdminCoursesView(APIView):
             return Response({"courses": [course_payload(c) for c in courses]})
         except Exception as exc:
             _log_error("Admin courses error", exc=exc)
-            return Response({"error": "Failed to load courses."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": "Failed to load courses."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class RestrictCourseView(APIView):

@@ -607,10 +607,12 @@ class AdminSignupView(APIView):
         if not password:
             fields["password"] = "Password is required."
         if phone and Profile.objects.filter(phone=phone).exists():
-            fields["phone"] = "An account with this phone number already exists."
+            fields["phone"] = f"An account with this phone number [{phone}] already exists."
         if fields:
-            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Please correct the highlighted fields.", "fields": fields},
+                status=status.HTTP_400_BAD_REQUEST
+                )
 
         try:
             validate_password(password)
