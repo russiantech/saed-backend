@@ -37,6 +37,7 @@ if not SECRET_KEY:
     raise RuntimeError("DJANGO_SECRET_KEY is required when DJANGO_DEBUG is false.")
 
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "saed.dunistech.ng,localhost,127.0.0.1")
+# ALLOWED_HOSTS = ["saed.dunistech.ng", "saed-api.simplylovely.ng"]
 if not DEBUG and not ALLOWED_HOSTS:
     raise RuntimeError("DJANGO_ALLOWED_HOSTS is required when DJANGO_DEBUG is false.")
 
@@ -176,7 +177,6 @@ CORS_ALLOWED_ORIGINS = env_list(
 
 # Required for fetch(..., credentials:"include") to work cross-origin.
 # Never combine with CORS_ALLOW_ALL_ORIGINS=True — browsers reject that.
-CORS_ALLOW_ALL_ORIGINS=True
 CORS_ALLOW_CREDENTIALS = True
 
 # ─── CSRF ─────────────────────────────────────────────────────────────────────
@@ -198,6 +198,7 @@ CSRF_COOKIE_HTTPONLY = False
 # Still overridable via .env for edge cases (e.g. same-origin deployments).
 CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "None")
 CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", True)
+
 # Set cookie domain for cross-origin deployments (e.g. .dunistech.ng)
 # Override via .env: CSRF_COOKIE_DOMAIN=.dunistech.ng
 CSRF_COOKIE_DOMAIN = os.getenv("CSRF_COOKIE_DOMAIN", None)

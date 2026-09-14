@@ -26,17 +26,30 @@ import os
 #     })
 
 # config/urls.py, next to debug_csrf
-from django.middleware.csrf import CsrfViewMiddleware
+# from django.middleware.csrf import CsrfViewMiddleware
+
+# def debug_csrf(request):
+#     mw = CsrfViewMiddleware(lambda r: None)
+#     return JsonResponse({
+#         "pid": os.getpid(),
+#         "CSRF_TRUSTED_ORIGINS": settings.CSRF_TRUSTED_ORIGINS,
+#         "CORS_ALLOWED_ORIGINS": settings.CORS_ALLOWED_ORIGINS,
+#         "csrf_trusted_origins_hosts": mw.csrf_trusted_origins_hosts,
+#     })
+    
+from urllib.parse import urlsplit
 
 def debug_csrf(request):
-    mw = CsrfViewMiddleware(lambda r: None)
+    trusted = settings.CSRF_TRUSTED_ORIGINS
+    parsed_hosts = [urlsplit(origin).netloc for origin in trusted]
     return JsonResponse({
         "pid": os.getpid(),
-        "CSRF_TRUSTED_ORIGINS": settings.CSRF_TRUSTED_ORIGINS,
+        "CSRF_TRUSTED_ORIGINS": trusted,
+        "CSRF_TRUSTED_ORIGINS_parsed_hosts": parsed_hosts,
         "CORS_ALLOWED_ORIGINS": settings.CORS_ALLOWED_ORIGINS,
-        "csrf_trusted_origins_hosts": mw.csrf_trusted_origins_hosts,
+        "DJANGO_ALLOWED_HOSTS": settings.ALLOWED_HOSTS,
     })
-       
+  
 urlpatterns = [
     
     path("debug/csrf/", debug_csrf),
