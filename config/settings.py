@@ -176,6 +176,7 @@ CORS_ALLOWED_ORIGINS = env_list(
 
 # Required for fetch(..., credentials:"include") to work cross-origin.
 # Never combine with CORS_ALLOW_ALL_ORIGINS=True — browsers reject that.
+CORS_ALLOW_ALL_ORIGINS=True
 CORS_ALLOW_CREDENTIALS = True
 
 # ─── CSRF ─────────────────────────────────────────────────────────────────────
