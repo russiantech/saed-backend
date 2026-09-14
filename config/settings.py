@@ -36,8 +36,9 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-saed-secret-key" if DEBUG 
 if not SECRET_KEY:
     raise RuntimeError("DJANGO_SECRET_KEY is required when DJANGO_DEBUG is false.")
 
-# ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "saed.dunistech.ng,localhost,127.0.0.1")
-ALLOWED_HOSTS = ['*']  # Allow all hosts for development and testing. Update in production.
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "saed.dunistech.ng,localhost,127.0.0.1")
+# ALLOWED_HOSTS = ['*']
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # ALLOWED_HOSTS = ["saed.dunistech.ng", "saed-api.simplylovely.ng"]
 if not DEBUG and not ALLOWED_HOSTS:
