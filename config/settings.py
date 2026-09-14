@@ -36,7 +36,7 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-saed-secret-key" if DEBUG 
 if not SECRET_KEY:
     raise RuntimeError("DJANGO_SECRET_KEY is required when DJANGO_DEBUG is false.")
 
-ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "saed.dunistech.ng,localhost,127.0.0.1")
 if not DEBUG and not ALLOWED_HOSTS:
     raise RuntimeError("DJANGO_ALLOWED_HOSTS is required when DJANGO_DEBUG is false.")
 
@@ -161,6 +161,11 @@ CORS_ALLOW_METHODS = [
 # # Required for fetch(..., credentials:"include") to work cross-origin.
 # # Never combine with CORS_ALLOW_ALL_ORIGINS=True — browsers reject that.
 # CORS_ALLOW_CREDENTIALS = True
+
+CORS_ORIGIN_WHITELIST = [
+    'https://saed.dunistech.ng',
+    'http://localhost:8000',
+]
 
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 # Override via .env: CORS_ALLOWED_ORIGINS=http://localhost:3002,https://saed.dunistech.ng
