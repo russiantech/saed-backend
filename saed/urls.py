@@ -6,19 +6,29 @@ from . import views
 from django.http import JsonResponse
 from django.conf import settings
 
+# def debug_csrf(request):
+#     return JsonResponse({
+#         "CSRF_TRUSTED_ORIGINS": settings.CSRF_TRUSTED_ORIGINS,
+#         "CORS_ALLOWED_ORIGINS": settings.CORS_ALLOWED_ORIGINS,
+#         "DEBUG": settings.DEBUG,
+#     })
+
+
+# config/urls.py
+import os
+
 def debug_csrf(request):
     return JsonResponse({
+        "pid": os.getpid(),
         "CSRF_TRUSTED_ORIGINS": settings.CSRF_TRUSTED_ORIGINS,
         "CORS_ALLOWED_ORIGINS": settings.CORS_ALLOWED_ORIGINS,
         "DEBUG": settings.DEBUG,
     })
-
-
-
+    
 urlpatterns = [
     
     path("debug/csrf/", debug_csrf),
-    path("api/debug-csrf/", debug_csrf, name="debug_csrf"),
+    path("debug-csrf/", debug_csrf, name="debug_csrf"),
     
     # Basic
     path("health/", views.health),
