@@ -17,14 +17,26 @@ from django.conf import settings
 # config/urls.py
 import os
 
+# def debug_csrf(request):
+#     return JsonResponse({
+#         "pid": os.getpid(),
+#         "CSRF_TRUSTED_ORIGINS": settings.CSRF_TRUSTED_ORIGINS,
+#         "CORS_ALLOWED_ORIGINS": settings.CORS_ALLOWED_ORIGINS,
+#         "DEBUG": settings.DEBUG,
+#     })
+
+# config/urls.py, next to debug_csrf
+from django.middleware.csrf import CsrfViewMiddleware
+
 def debug_csrf(request):
+    mw = CsrfViewMiddleware(lambda r: None)
     return JsonResponse({
         "pid": os.getpid(),
         "CSRF_TRUSTED_ORIGINS": settings.CSRF_TRUSTED_ORIGINS,
         "CORS_ALLOWED_ORIGINS": settings.CORS_ALLOWED_ORIGINS,
-        "DEBUG": settings.DEBUG,
+        "csrf_trusted_origins_hosts": mw.csrf_trusted_origins_hosts,
     })
-    
+       
 urlpatterns = [
     
     path("debug/csrf/", debug_csrf),
