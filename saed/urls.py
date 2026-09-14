@@ -1,8 +1,7 @@
+import base64
+
 from django.urls import path
 from . import views
-
-
-# config/urls.py
 
 from django.http import JsonResponse
 from django.conf import settings
@@ -13,6 +12,8 @@ def debug_csrf(request):
         "CORS_ALLOWED_ORIGINS": settings.CORS_ALLOWED_ORIGINS,
         "DEBUG": settings.DEBUG,
     })
+
+
 
 urlpatterns = [
     

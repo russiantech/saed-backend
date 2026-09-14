@@ -76,7 +76,7 @@
 
 # v2
 # config/urls.py
-from http.client import HTTPResponse
+# from http.client import HTTPResponse
 
 from django.contrib import admin
 from django.conf import settings
@@ -112,11 +112,20 @@ def clear_session(request):
     response.delete_cookie("sessionid")
     return response
 
+# def favicon(request):
+#     data = base64.b64decode(
+#         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAn0B9Sl6Jd0AAAAASUVORK5CYII="
+#     )
+#     return HTTPResponse(data, content_type="image/png")
+
+from django.http import HttpResponse   # not http.client.HTTPResponse
+
 def favicon(request):
+    # data = base64.b64decode(...)
     data = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAn0B9Sl6Jd0AAAAASUVORK5CYII="
     )
-    return HTTPResponse(data, content_type="image/png")
+    return HttpResponse(data, content_type="image/png")
 
 schema_view = get_schema_view(
     openapi.Info(
