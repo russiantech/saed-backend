@@ -91,14 +91,26 @@ from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 
 
+# @csrf_exempt
+# def clear_session(request):
+#     """Flush session and force browser to drop the sessionid cookie."""
+#     request.session.flush()
+#     response = JsonResponse({"ok": True})
+#     response.delete_cookie("sessionid")
+#     return response
+
+# config/urls.py
 @csrf_exempt
 def clear_session(request):
     """Flush session and force browser to drop the sessionid cookie."""
+    """Explicit logout-and-purge endpoint. Not for automatic CSRF recovery —
+    this destroys the authenticated session. Only call this from an
+    intentional 'log out everywhere' action, never as a side effect of a
+    transient CSRF failure."""
     request.session.flush()
     response = JsonResponse({"ok": True})
     response.delete_cookie("sessionid")
     return response
-
 
 def favicon(request):
     data = base64.b64decode(

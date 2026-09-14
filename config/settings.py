@@ -1,3 +1,5 @@
+# config/settings.py
+
 import os
 from pathlib import Path
 
@@ -164,7 +166,7 @@ CORS_ALLOW_METHODS = [
 # Override via .env: CORS_ALLOWED_ORIGINS=http://localhost:3002,https://saed.dunistech.ng
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:3002,http://127.0.0.1:3002",
+    "https://saed.dunistech.ng,http://localhost:3002,http://127.0.0.1:3002",
 )
 
 # Required for fetch(..., credentials:"include") to work cross-origin.
@@ -176,7 +178,7 @@ CORS_ALLOW_CREDENTIALS = True
 # Override via .env: CSRF_TRUSTED_ORIGINS=http://localhost:3002,https://saed.dunistech.ng
 CSRF_TRUSTED_ORIGINS = env_list(
     "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:3002,http://127.0.0.1:3002",
+    "https://saed.dunistech.ng,http://localhost:3002,http://127.0.0.1:3002",
 )
 # False = JS can read the cookie to send X-CSRFToken header. Must not be True.
 CSRF_COOKIE_HTTPONLY = False
