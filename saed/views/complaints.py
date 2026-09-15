@@ -16,6 +16,7 @@ class SubmitComplaintView(APIView):
         data = request.data
         subject = data.get("subject", "").strip()
         message = data.get("message", "").strip()
+        recipient = data.get("recipient", "").strip()
 
         if not subject:
             return Response({"error": "Subject is required.",
@@ -26,16 +27,25 @@ class SubmitComplaintView(APIView):
                              "fields": {"message": "Message is required."}},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        valid_recipients = {"saed_admin", "dunis_admin"}
+        if recipient and recipient not in valid_recipients:
+            return Response({"error": "Invalid recipient.",
+                             "fields": {"recipient": "Invalid recipient."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
         try:
             sender_name = request.user.get_full_name() or request.user.email
-            admin_users = User.objects.filter(profile__role__in=["saed_admin", "dunis_admin"])
+            if recipient:
+                admin_users = User.objects.filter(profile__role=recipient)
+            else:
+                admin_users = User.objects.filter(profile__role__in=["saed_admin", "dunis_admin"])
             for admin in admin_users:
                 Complaint.objects.create(
                     user=admin,
                     subject=subject,
                     message=f"From: {sender_name} ({request.user.email})\n\n{message}",
                 )
-            _log_info(f"Complaint distributed to {admin_users.count()} admins")
+            _log_info(f"Complaint distributed to {admin_users.count()} admins" + (f" (recipient={recipient})" if recipient else ""))
 
             _notify_admins_email(
                 subject=f"New Complaint: {subject}",

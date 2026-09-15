@@ -189,9 +189,6 @@ class FastTrackVideosForCourseView(APIView):
     def get(self, request, course_id):
         try:
             user = request.user
-            profile = getattr(user, "profile", None)
-            is_busy = profile.is_busy_corper if profile else False
-
             try:
                 course = Course.objects.get(id=course_id, is_active=True)
             except Course.DoesNotExist:
@@ -199,6 +196,12 @@ class FastTrackVideosForCourseView(APIView):
 
             if not course.has_fast_track:
                 return Response({"videos": [], "error": "Fast track is not enabled for this course."})
+
+            if not Connection.objects.filter(
+                corps_member=user, trainer=course.trainer, status="active"
+            ).exists():
+                return Response({"error": "Connect with this course's trainer to access its videos."},
+                                status=status.HTTP_403_FORBIDDEN)
 
             is_enrolled = False
             if course.price > 0:
@@ -208,7 +211,7 @@ class FastTrackVideosForCourseView(APIView):
 
             videos = FastTrackVideo.objects.select_related("course").filter(course=course)
 
-            if not is_busy and not is_enrolled:
+            if course.price > 0 and not is_enrolled:
                 videos = videos.filter(is_free_preview=True)
 
             result = []
@@ -289,10 +292,18 @@ class FetchVideoDurationView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         duration = None
-        if "youtube.com" in url or "youtu.be" in url:
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https":
+            return Response({"error": "Use an HTTPS YouTube or Vimeo URL."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}:
             duration = _fetch_youtube_duration(url)
-        elif "vimeo.com" in url:
+        elif host in {"vimeo.com", "www.vimeo.com", "player.vimeo.com"}:
             duration = _fetch_vimeo_duration(url)
+        else:
+            return Response({"error": "Only YouTube and Vimeo URLs are supported."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         if duration is None:
             return Response({"error": "Could not fetch duration. Enter it manually."},

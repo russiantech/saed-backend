@@ -2,6 +2,8 @@
 DUNIS admin views.
 """
 import json
+import urllib.request
+from django.conf import settings as django_settings
 from django.utils.crypto import get_random_string
 from django.utils.timezone import now
 from rest_framework.views import APIView
@@ -63,6 +65,38 @@ class DunisConfirmPaymentView(APIView):
         if profile.role != "trainer":
             return Response({"error": "This user is not a trainer."},
                             status=status.HTTP_400_BAD_REQUEST)
+        if not reference or reference != profile.payment_reference:
+            return Response({"error": "Payment reference does not match this trainer's payment."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
+        if not secret_key:
+            return Response({"error": "Payment is not configured."},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        try:
+            api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
+            gateway_request = urllib.request.Request(
+                f"{api_url}/transaction/verify/{reference}",
+                headers={"Authorization": f"Bearer {secret_key}"},
+            )
+            with urllib.request.urlopen(gateway_request, timeout=30) as gateway_response:
+                verification = json.loads(gateway_response.read().decode())
+            payment = verification.get("data", {})
+            expected_kobo = int(getattr(django_settings, "PAYSTACK_DEFAULT_AMOUNT", 50000))
+            valid_payment = (
+                verification.get("status") and payment.get("status") == "success"
+                and payment.get("reference") == reference
+                and payment.get("amount") == expected_kobo
+                and payment.get("currency") == "NGN"
+                and payment.get("customer", {}).get("email", "").lower() == user.email.lower()
+            )
+            if not valid_payment:
+                return Response({"error": "Paystack verification did not match this trainer payment."},
+                                status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            _log_error(f"Trainer payment verification error for {user_id}", exc=exc)
+            return Response({"error": "Unable to verify payment with Paystack."},
+                            status=status.HTTP_502_BAD_GATEWAY)
 
         try:
             profile.has_paid = True

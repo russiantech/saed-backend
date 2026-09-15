@@ -79,6 +79,7 @@ from .payments import (
     CourseEnrollmentStatusView, TrainerPendingEnrollmentsView,
     TrainerConfirmEnrollmentView, TrainerRejectEnrollmentView,
     AdminPendingRefundsView, AdminProcessRefundView, AdminRejectRefundView,
+    paystack_webhook,
 )
 
 # Fast track
@@ -104,7 +105,4 @@ from .dunis import (
     DunisPendingPaymentsView, DunisConfirmPaymentView,
     DunisAllTrainersView, DunisToggleFastTrackView,
 )
-
-# Program management helpers
-from .programs import _apply_program_data as apply_program_data
 

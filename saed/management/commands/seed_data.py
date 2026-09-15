@@ -413,10 +413,8 @@ from django.contrib.auth.hashers import make_password
 from saed.models import (
     Profile,
     Course,
-    Program,
     Connection,
     CourseEnrollment,
-    Application,
     Complaint,
 )
 
@@ -563,27 +561,6 @@ SEED_COURSES = [
     },
 ]
 
-SEED_PROGRAMS = [
-    {
-        "title": "SAED ICT Bootcamp 2026",
-        "category": "ict",
-        "description": "Intensive 4-week ICT training for corps members.",
-        "duration_weeks": 4,
-        "capacity": 50,
-        "trainer_name": "Ade Ogunlesi",
-        "location": "Ikeja Community Center",
-    },
-    {
-        "title": "Creative Industry Workshop",
-        "category": "creative_industry",
-        "description": "Hands-on training in graphic design and content creation.",
-        "duration_weeks": 3,
-        "capacity": 30,
-        "trainer_name": "Chioma Eze",
-        "location": "Lagos Island Arts Pavilion",
-    },
-]
-
 
 def create_user(data, password=DEFAULT_PASSWORD):
     username = data["username"]
@@ -712,29 +689,6 @@ class Command(BaseCommand):
                     action = "Created" if created else "Updated"
                     self.stdout.write(f"   {action}: {course.title}")
 
-                self.stdout.write(self.style.HTTP_INFO("\n Seeding Programs..."))
-                for data in SEED_PROGRAMS:
-                    trainer = User.objects.filter(
-                        profile__role="trainer",
-                        profile__specialization=data["category"],
-                    ).first()
-
-                    program, created = Program.objects.get_or_create(
-                        title=data["title"],
-                        defaults={
-                            "category": data["category"],
-                            "description": data["description"],
-                            "duration_weeks": data["duration_weeks"],
-                            "capacity": data["capacity"],
-                            "trainer": trainer,
-                            "trainer_name": data["trainer_name"],
-                            "location": data["location"],
-                            "is_active": True,
-                        },
-                    )
-                    action = "Created" if created else "Updated"
-                    self.stdout.write(f"   {action}: {program.title}")
-
         # Summary
         self.stdout.write(self.style.SUCCESS("\n" + "=" * 50))
         self.stdout.write(self.style.SUCCESS("SEED SUMMARY"))
@@ -742,7 +696,6 @@ class Command(BaseCommand):
         self.stdout.write(f"   Users:        {User.objects.count()}")
         self.stdout.write(f"   Profiles:     {Profile.objects.count()}")
         self.stdout.write(f"   Courses:      {Course.objects.count()}")
-        self.stdout.write(f"   Programs:     {Program.objects.count()}")
         self.stdout.write(self.style.SUCCESS("=" * 50))
         self.stdout.write(self.style.WARNING(f"\n Default password: {DEFAULT_PASSWORD}"))
         self.stdout.write(self.style.WARNING(" Change these passwords immediately!\n"))

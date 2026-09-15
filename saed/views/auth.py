@@ -406,9 +406,13 @@ class EmailVerifyView(APIView):
             if not profile:
                 return Response({"error": "Invalid or expired verification token."},
                                 status=status.HTTP_400_BAD_REQUEST)
+            if profile.is_email_verified:
+                return Response({"ok": True, "message": "Email is already verified."})
             profile.is_email_verified = True
-            profile.email_verification_token = ""
-            profile.save(update_fields=["is_email_verified", "email_verification_token"])
+            # Keep the current token so duplicate browser requests (including
+            # React Strict Mode's development re-mount) remain idempotent.
+            # A resend replaces it, immediately invalidating the old link.
+            profile.save(update_fields=["is_email_verified"])
             return Response({"ok": True, "message": "Email verified successfully."})
         except Exception as exc:
             _log_error("Email verification error", exc=exc)

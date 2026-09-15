@@ -95,6 +95,7 @@ class Course(models.Model):
     category = models.CharField(max_length=32, blank=True, choices=SKILL_AREAS)
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     duration_weeks = models.PositiveSmallIntegerField(default=4)
+    location = models.CharField(max_length=120, blank=True, default="Lagos")
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     max_students = models.PositiveIntegerField(default=40)
@@ -185,6 +186,9 @@ class CourseEnrollment(models.Model):
         related_name="enrollments",
     )
     payment_reference = models.CharField(max_length=100, blank=True, default="")
+    # A pending enrollment is not proof of payment. This is set only after
+    # Paystack confirms a successful transaction.
+    payment_verified = models.BooleanField(default=False)
     amount_paid = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending")
     confirmed_by = models.ForeignKey(
@@ -209,68 +213,8 @@ class CourseEnrollment(models.Model):
         return f"{self.student.username} -> {self.course.title}"
 
 
-class Program(models.Model):
-    CATEGORY_CHOICES = SKILL_AREAS
-
-    title = models.CharField(max_length=120)
-    category = models.CharField(max_length=32, choices=CATEGORY_CHOICES)
-    description = models.TextField()
-    duration_weeks = models.PositiveSmallIntegerField(default=4)
-    capacity = models.PositiveIntegerField(default=40)
-    trainer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="training_programs",
-    )
-    trainer_name = models.CharField(max_length=120)
-    location = models.CharField(max_length=120)
-    is_active = models.BooleanField(default=True)
-    is_restricted = models.BooleanField(default=False)
-    restricted_at = models.DateTimeField(null=True, blank=True)
-    restricted_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="restricted_programs",
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["title"]
-
-    def __str__(self):
-        return self.title
-
-
-class Application(models.Model):
-    STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("approved", "Approved"),
-        ("completed", "Completed"),
-        ("declined", "Declined"),
-    ]
-
-    applicant = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    program = models.ForeignKey(Program, on_delete=models.CASCADE)
-    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending")
-    motivation = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ["applicant", "program"]
-        ordering = ["-created_at"]
-
-    def __str__(self):
-        return f"{self.applicant.username} -> {self.program.title}"
-
-
 class Notification(models.Model):
     REASON_CHOICES = [
-        ("program_restricted", "Program Restricted"),
-        ("program_unrestricted", "Program Unrestricted"),
         ("course_restricted", "Course Restricted"),
         ("course_unrestricted", "Course Unrestricted"),
         ("connection_request", "Connection Request"),
@@ -282,10 +226,9 @@ class Notification(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")
     title = models.CharField(max_length=200)
     message = models.TextField()
-    reason = models.CharField(max_length=32, choices=REASON_CHOICES, default="program_restricted")
+    reason = models.CharField(max_length=32, choices=REASON_CHOICES, default="course_restricted")
     created_by_role = models.CharField(max_length=20, blank=True, default="")
     is_read = models.BooleanField(default=False)
-    program = models.ForeignKey(Program, on_delete=models.CASCADE, null=True, blank=True, related_name="notifications")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

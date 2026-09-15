@@ -19,8 +19,8 @@ from django.http.multipartparser import MultiPartParser, MultiPartParserError
 from django.utils.timezone import now
 
 from ..models import (
-    Application, Connection, Course, CourseEnrollment,
-    Notification, Profile, Program
+    Connection, Course, CourseEnrollment,
+    Notification, Profile,
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -80,7 +80,7 @@ def _send_email_async(
 # ═══════════════════════════════════════════════════════════════════════════════
 # NOTIFICATION HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
-def _notify_admins(title, message, reason="admin_update", program=None,
+def _notify_admins(title, message, reason="admin_update",
                    created_by_role=""):
     try:
         admin_profiles = Profile.objects.filter(
@@ -90,7 +90,7 @@ def _notify_admins(title, message, reason="admin_update", program=None,
         for profile in admin_profiles:
             notifications.append(Notification(
                 user=profile.user, title=title, message=message,
-                reason=reason, program=program, created_by_role=created_by_role,
+                reason=reason, created_by_role=created_by_role,
             ))
         if notifications:
             Notification.objects.bulk_create(notifications)
@@ -144,10 +144,11 @@ def _notify_admins_email(subject, message, html_message=None,
                    extra={"subject": subject, "email_type": email_type})
 
 
-def _notify_user(user, title, message, reason="user_update", program=None, created_by_role=None):
+def _notify_user(user, title, message, reason="user_update", created_by_role=None):
     try:
         Notification.objects.create(
-            user=user, title=title, message=message, reason=reason, program=program,
+            user=user, title=title, message=message, reason=reason,
+            created_by_role=created_by_role or "",
         )
         _log_info(f"Notification created for user {user.id}",
                    extra={"title": title, "reason": reason})
@@ -162,6 +163,7 @@ PROGRAM_FIELDS = {
     "title": "title", "category": "category", "description": "description",
     "durationWeeks": "duration_weeks", "capacity": "capacity",
     "location": "location", "isActive": "is_active",
+    "startDate": "start_date", "endDate": "end_date",
 }
 
 VALID_ROLES = {"corps_member", "trainer", "saed_admin", "dunis_admin"}
@@ -249,11 +251,14 @@ def _parse_multipart(request):
 # DRF PERMISSION CLASSES
 # ═══════════════════════════════════════════════════════════════════════════════
 from rest_framework.permissions import BasePermission
+from rest_framework.exceptions import NotAuthenticated
 
 
 class IsAuthenticatedAPI(BasePermission):
     def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated
+        if request.user and request.user.is_authenticated:
+            return True
+        raise NotAuthenticated("Your session has expired. Please sign in again.")
 
 
 def HasRole(*roles):
@@ -262,7 +267,7 @@ def HasRole(*roles):
         def has_permission(self, request, view):
             if not (request.user and request.user.is_authenticated):
                 _log_warning(f"HasRole({roles}): unauthenticated request to {request.path}")
-                return False
+                raise NotAuthenticated("Your session has expired. Please sign in again.")
             user_role = role_for(request.user)
             if user_role not in roles:
                 _log_warning(
@@ -292,6 +297,19 @@ class IsAuthorizedTrainer(BasePermission):
         return True
 
 
+class HasTrainerRole(BasePermission):
+    """Permission: must be an authorized trainer (is_authorized + has_paid + payment_verified)."""
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        profile = getattr(request.user, "profile", None)
+        if not profile or profile.role != "trainer":
+            return False
+        if not profile.is_authorized:
+            return False
+        if not profile.has_paid or not profile.payment_verified:
+            return False
+        return True
 # ═══════════════════════════════════════════════════════════════════════════════
 # LEGACY DECORATORS (kept for backward compat during transition)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -380,39 +398,50 @@ def user_payload(user, request=None):
     }
 
 
-def program_payload(program):
-    approved_count = program.application_set.filter(status="approved").count()
+def program_payload(course):
+    """Returns a course in the format the frontend expects as a 'program'."""
+    trainer = course.trainer
+    enrolled_count = CourseEnrollment.objects.filter(course=course, status="confirmed").count()
     return {
-        "id": program.id,
-        "title": program.title,
-        "category": program.category,
-        "description": program.description,
-        "durationWeeks": program.duration_weeks,
-        "capacity": program.capacity,
-        "trainerId": program.trainer_id,
-        "trainerName": program.trainer_name,
-        "location": program.location,
-        "availableSlots": max(program.capacity - approved_count, 0),
-        "isActive": program.is_active,
-        "isRestricted": program.is_restricted,
-        "restrictedById": program.restricted_by_id,
-        "restrictedAt": program.restricted_at.isoformat() if program.restricted_at else None,
+        "id": course.id,
+        "title": course.title,
+        "category": course.category,
+        "description": course.description,
+        "durationWeeks": course.duration_weeks,
+        "capacity": course.max_students,
+        "price": str(course.price),
+        "trainerId": course.trainer_id,
+        "trainerName": (trainer.get_full_name() or trainer.email) if trainer else None,
+        "location": course.location,
+        "startDate": course.start_date.isoformat() if course.start_date else None,
+        "endDate": course.end_date.isoformat() if course.end_date else None,
+        "availableSlots": max(course.max_students - enrolled_count, 0),
+        "isActive": course.is_active,
+        "hasFastTrack": course.has_fast_track,
+        "isRestricted": course.is_restricted,
+        "restrictedById": course.restricted_by_id,
+        "restrictedAt": course.restricted_at.isoformat() if course.restricted_at else None,
     }
 
 
-def application_payload(application):
+def application_payload(enrollment):
+    """Returns an enrollment in the format the frontend expects as an 'application'."""
     return {
-        "id": application.id,
-        "status": application.status,
-        "motivation": application.motivation,
-        "createdAt": application.created_at.isoformat(),
-        "applicant": user_payload(application.applicant),
-        "program": program_payload(application.program),
+        "id": enrollment.id,
+        "status": enrollment.status,
+        "motivation": f"Payment reference: {enrollment.payment_reference}" if enrollment.payment_reference else "",
+        "createdAt": enrollment.enrolled_at.isoformat() if enrollment.enrolled_at else "",
+        "applicant": user_payload(enrollment.student),
+        "program": program_payload(enrollment.course),
+        "type": "course_enrollment",
+        "amountPaid": str(enrollment.amount_paid),
+        "paymentVerified": enrollment.payment_verified,
     }
 
 
 def program_categories_payload():
-    return [{"value": v, "label": l} for v, l in Program.CATEGORY_CHOICES]
+    from ..models import SKILL_AREAS
+    return [{"value": v, "label": l} for v, l in SKILL_AREAS]
 
 
 def trainer_payload(user):
@@ -431,32 +460,32 @@ def trainers_payload():
 
 
 def managed_programs_for(user):
-    programs = Program.objects.select_related("trainer")
+    courses = Course.objects.select_related("trainer", "trainer__profile")
     user_role = role_for(user)
     if user_role == "trainer":
-        return programs.filter(trainer=user)
-    if user_role == "saed_admin":
-        programs = programs.exclude(
-            is_restricted=True, restricted_by__profile__role="dunis_admin"
-        )
-    return programs
+        return courses.filter(trainer=user)
+    return courses
 
 
 def managed_applications_for(user):
-    applications = Application.objects.select_related(
-        "applicant", "applicant__profile", "program", "program__trainer"
-    )
     if role_for(user) == "trainer":
-        return applications.filter(program__trainer=user)
-    return applications
-
-
-def trainer_program_payload(program):
-    applications = program.application_set.select_related(
-        "applicant", "applicant__profile", "program", "program__trainer"
+        trainer_courses = Course.objects.filter(trainer=user)
+        enrollments = CourseEnrollment.objects.filter(
+            course__in=trainer_courses
+        ).select_related("student", "student__profile", "course", "course__trainer")
+        return list(enrollments)
+    enrollments = CourseEnrollment.objects.all().select_related(
+        "student", "student__profile", "course", "course__trainer"
     )
-    payload = program_payload(program)
-    payload["applications"] = [application_payload(item) for item in applications]
+    return list(enrollments)
+
+
+def trainer_program_payload(course):
+    enrollments = CourseEnrollment.objects.filter(
+        course=course
+    ).select_related("student", "student__profile", "course", "course__trainer")
+    payload = program_payload(course)
+    payload["applications"] = [application_payload(item) for item in enrollments]
     return payload
 
 
@@ -471,6 +500,7 @@ def course_payload(course):
         "category": course.category,
         "price": str(course.price),
         "durationWeeks": course.duration_weeks,
+        "location": course.location,
         "startDate": course.start_date.isoformat() if course.start_date else None,
         "endDate": course.end_date.isoformat() if course.end_date else None,
         "maxStudents": course.max_students,

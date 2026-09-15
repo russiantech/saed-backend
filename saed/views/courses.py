@@ -9,7 +9,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Course, FastTrackVideo
+from ..models import Connection, Course, CourseEnrollment, FastTrackVideo
 from .base import (
     _log_error, _notify_user,
     _safe_float, _resolve_course_dates, _parse_date,
@@ -63,6 +63,15 @@ class ManageCoursesView(APIView):
         except (TypeError, ValueError):
             fields["maxStudents"] = "Enter a valid number."
 
+        start_date = _parse_date(data.get("startDate"))
+        end_date = _parse_date(data.get("endDate"))
+        if not start_date:
+            fields["startDate"] = "Start date is required."
+        if not end_date:
+            fields["endDate"] = "End date is required."
+        if start_date and end_date and end_date < start_date:
+            fields["endDate"] = "End date must be after start date."
+
         if fields:
             return Response({"error": "Please correct the highlighted fields.", "fields": fields},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -76,8 +85,8 @@ class ManageCoursesView(APIView):
                     category=category,
                     price=price,
                     duration_weeks=_safe_float(data.get("durationWeeks", 4), 4),
-                    start_date=_parse_date(data.get("startDate")),
-                    end_date=_parse_date(data.get("endDate")),
+                    start_date=start_date,
+                    end_date=end_date,
                     max_students=max_students,
                     has_fast_track=bool(data.get("hasFastTrack", False)),
                 )
@@ -199,6 +208,18 @@ class CourseDetailView(APIView):
             return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
 
         videos = FastTrackVideo.objects.filter(course=course).order_by("order")
+        is_owner = course.trainer_id == request.user.id
+        is_connected = Connection.objects.filter(
+            corps_member=request.user, trainer=course.trainer, status="active"
+        ).exists()
+        is_enrolled = CourseEnrollment.objects.filter(
+            student=request.user, course=course, status="confirmed"
+        ).exists()
+        if not is_owner:
+            if not is_connected:
+                videos = videos.none()
+            elif course.price > 0 and not is_enrolled:
+                videos = videos.filter(is_free_preview=True)
         trainer_data = None
         if course.trainer:
             trainer_data = {
@@ -209,6 +230,7 @@ class CourseDetailView(APIView):
             }
         return Response({
             "course": course_payload(course),
+            "enrolledCount": CourseEnrollment.objects.filter(course=course, status="confirmed").count(),
             "trainer": trainer_data,
             "videos": [
                 {

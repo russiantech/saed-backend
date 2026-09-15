@@ -1,18 +1,23 @@
 """
-Payment views: Paystack init/verify, enrollments, refunds.
+Payment views: Paystack init/verify, enrollments, refunds, webhooks.
 """
 
+import hashlib
+import hmac
 import json
 import urllib.request
 import urllib.error
 from django.conf import settings as django_settings
+from django.http import HttpResponse, HttpResponseBadRequest
 from django.utils.crypto import get_random_string
 from django.utils.timezone import now
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Course, CourseEnrollment, Profile
+from ..models import Connection, Course, CourseEnrollment, Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async, _notify_admins,
     _notify_admins_email,
@@ -24,10 +29,16 @@ class PaystackInitializeView(APIView):
     permission_classes = [IsAuthenticatedAPI]
 
     def post(self, request):
-        data = request.data
-        email = data.get("email", "")
+        profile = getattr(request.user, "profile", None)
+        if not profile or profile.role != "trainer":
+            return Response({"error": "Only trainer accounts can make this payment."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if profile.has_paid:
+            return Response({"error": "This trainer payment has already been recorded."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        email = request.user.email
         default_amount = getattr(django_settings, "PAYSTACK_DEFAULT_AMOUNT", 50000)
-        amount = data.get("amount", default_amount)
+        amount = default_amount
 
         if not email:
             return Response({"error": "Email is required.",
@@ -41,17 +52,21 @@ class PaystackInitializeView(APIView):
 
         reference = f"SAED-{get_random_string(12).upper()}"
         try:
-            profile = Profile.objects.filter(user__email=email, role="trainer").first()
-            if profile:
-                profile.payment_reference = reference
-                profile.save(update_fields=["payment_reference"])
+            profile.payment_reference = reference
+            profile.save(update_fields=["payment_reference"])
         except Exception as exc:
             _log_error("Paystack profile update error", exc=exc)
 
-        amount_kobo = int(float(amount) * 100)
+        # The configured trainer fee is expressed in Paystack's subunit
+        # (kobo), matching PAYSTACK_DEFAULT_AMOUNT and the frontend display.
+        amount_kobo = int(amount)
+        frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002").rstrip("/")
         payload = json.dumps({
             "email": email, "amount": amount_kobo,
-            "reference": reference, "metadata": {"reference": reference},
+            "reference": reference,
+            "metadata": {"reference": reference, "type": "trainer_activation"},
+            "currency": "NGN",
+            "callback_url": f"{frontend_url}/app/payment/callback?reference={reference}&type=trainer",
         }).encode()
 
         api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
@@ -93,7 +108,7 @@ class PaystackInitializeView(APIView):
 
 
 class CoursePayInitializeView(APIView):
-    permission_classes = [IsAuthenticatedAPI]
+    permission_classes = [HasRole("corps_member")]
 
     def post(self, request):
         data = request.data
@@ -103,12 +118,18 @@ class CoursePayInitializeView(APIView):
                              "fields": {"courseId": "Course ID is required."}},
                             status=status.HTTP_400_BAD_REQUEST)
         try:
-            course = Course.objects.get(id=course_id, is_active=True)
+            course = Course.objects.get(id=course_id, is_active=True, is_restricted=False)
         except Course.DoesNotExist:
             return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
 
         if course.price <= 0:
             return Response({"error": "This course is free."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not Connection.objects.filter(
+            corps_member=request.user, trainer=course.trainer, status="active"
+        ).exists():
+            return Response({"error": "Connect with this course's trainer before enrolling."},
+                            status=status.HTTP_403_FORBIDDEN)
 
         try:
             confirmed_count = CourseEnrollment.objects.filter(
@@ -125,7 +146,12 @@ class CoursePayInitializeView(APIView):
             if enrollment.status == "confirmed":
                 return Response({"error": "You already have access to this course."},
                                 status=status.HTTP_400_BAD_REQUEST)
-            if enrollment.status == "pending":
+            # A newly-created enrollment starts as ``pending`` before this
+            # view assigns its Paystack reference. Only block an enrollment
+            # that already has a reference (i.e. one actually submitted for
+            # trainer review). A blank reference is an interrupted checkout
+            # and can safely be resumed.
+            if enrollment.status == "pending" and enrollment.payment_reference:
                 return Response({"error": "Payment already pending trainer confirmation.", "pending": True},
                                 status=status.HTTP_400_BAD_REQUEST)
             if enrollment.status == "refunded":
@@ -138,9 +164,10 @@ class CoursePayInitializeView(APIView):
 
             reference = f"SAED-COURSE-{get_random_string(12).upper()}"
             enrollment.payment_reference = reference
+            enrollment.payment_verified = False
             enrollment.amount_paid = course.price
             enrollment.save(update_fields=[
-                "payment_reference", "amount_paid", "status",
+                "payment_reference", "payment_verified", "amount_paid", "status",
                 "refund_requested", "refund_requested_at",
                 "refund_processed", "refund_processed_at", "refund_note",
             ])
@@ -154,7 +181,9 @@ class CoursePayInitializeView(APIView):
             payload = json.dumps({
                 "email": request.user.email, "amount": amount_kobo,
                 "reference": reference,
+                "currency": "NGN",
                 "metadata": {"reference": reference, "course_id": course.id},
+                "callback_url": f"{getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3002').rstrip('/')}/app/payment/verify?reference={reference}",
             }).encode()
 
             api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
@@ -195,7 +224,7 @@ class CoursePayInitializeView(APIView):
 
 
 class CoursePayVerifyView(APIView):
-    permission_classes = [IsAuthenticatedAPI]
+    permission_classes = [HasRole("corps_member")]
 
     def post(self, request):
         data = request.data
@@ -211,32 +240,44 @@ class CoursePayVerifyView(APIView):
             if not enrollment:
                 return Response({"error": "Payment record not found."},
                                 status=status.HTTP_404_NOT_FOUND)
-            if enrollment.status == "pending":
+            if enrollment.status == "pending" and enrollment.payment_verified:
                 return Response({"ok": True, "message": "Payment already pending trainer confirmation."})
             if enrollment.status == "confirmed":
                 return Response({"ok": True, "message": "Already verified."})
 
             secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
-            if secret_key:
-                api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
-                req = urllib.request.Request(
-                    f"{api_url}/transaction/verify/{reference}",
-                    headers={"Authorization": f"Bearer {secret_key}"},
+            if not secret_key:
+                return Response({"error": "Payment is not configured."},
+                                status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
+            req = urllib.request.Request(
+                f"{api_url}/transaction/verify/{reference}",
+                headers={"Authorization": f"Bearer {secret_key}"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    body = json.loads(resp.read().decode())
+                payment = body.get("data", {})
+                expected_kobo = int(float(enrollment.course.price) * 100)
+                valid_payment = (
+                    body.get("status") and payment.get("status") == "success"
+                    and payment.get("reference") == reference
+                    and payment.get("amount") == expected_kobo
+                    and payment.get("currency") == "NGN"
+                    and payment.get("customer", {}).get("email", "").lower() == request.user.email.lower()
                 )
-                try:
-                    with urllib.request.urlopen(req, timeout=30) as resp:
-                        body = json.loads(resp.read().decode())
-                    if not body.get("status") or body.get("data", {}).get("status") != "success":
-                        return Response({"error": body.get("message", "Payment not successful.")},
-                                        status=status.HTTP_400_BAD_REQUEST)
-                except Exception as exc:
-                    _log_error("Payment verification gateway error", exc=exc)
-                    return Response({"error": "Unable to verify payment with gateway."},
-                                    status=status.HTTP_502_BAD_GATEWAY)
+                if not valid_payment:
+                    return Response({"error": "Payment details do not match this enrollment."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+            except Exception as exc:
+                _log_error("Payment verification gateway error", exc=exc)
+                return Response({"error": "Unable to verify payment with gateway."},
+                                status=status.HTTP_502_BAD_GATEWAY)
 
             enrollment.status = "pending"
+            enrollment.payment_verified = True
             enrollment.amount_paid = enrollment.course.price
-            enrollment.save(update_fields=["status", "amount_paid"])
+            enrollment.save(update_fields=["status", "payment_verified", "amount_paid"])
             return Response({"ok": True, "message": "Payment submitted. Waiting for trainer confirmation."})
         except Exception as exc:
             _log_error("Payment verification error", exc=exc)
@@ -269,7 +310,7 @@ class TrainerPendingEnrollmentsView(APIView):
     def get(self, request):
         try:
             enrollments = CourseEnrollment.objects.filter(
-                course__trainer=request.user, status="pending"
+                course__trainer=request.user, status="pending", payment_verified=True
             ).select_related("student", "course")
             result = []
             for e in enrollments:
@@ -297,7 +338,7 @@ class TrainerConfirmEnrollmentView(APIView):
         try:
             enrollment = CourseEnrollment.objects.select_related(
                 "student", "course"
-            ).get(id=enrollment_id, course__trainer=request.user, status="pending")
+            ).get(id=enrollment_id, course__trainer=request.user, status="pending", payment_verified=True)
         except CourseEnrollment.DoesNotExist:
             return Response({"error": "Enrollment not found."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -334,7 +375,7 @@ class TrainerRejectEnrollmentView(APIView):
         try:
             enrollment = CourseEnrollment.objects.select_related(
                 "student", "course"
-            ).get(id=enrollment_id, course__trainer=request.user, status="pending")
+            ).get(id=enrollment_id, course__trainer=request.user, status="pending", payment_verified=True)
         except CourseEnrollment.DoesNotExist:
             return Response({"error": "Enrollment not found."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -437,9 +478,22 @@ class AdminProcessRefundView(APIView):
         except CourseEnrollment.DoesNotExist:
             return Response({"error": "Refund not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
+            refund_success = False
+            refund_message = ""
+
+            if enrollment.payment_reference:
+                amount_kobo = int(float(enrollment.amount_paid) * 100)
+                refund_success, refund_message = _paystack_refund(
+                    enrollment.payment_reference,
+                    amount_kobo=amount_kobo,
+                    note=note or f"Refund for {enrollment.course.title}",
+                )
+                if not refund_success:
+                    _log_warning(f"Paystack refund failed for {enrollment.payment_reference}: {refund_message}")
+
             enrollment.refund_processed = True
             enrollment.refund_processed_at = now()
-            enrollment.refund_note = note
+            enrollment.refund_note = note or (f"Paystack refund: {refund_message}" if refund_message else "")
             enrollment.status = "refunded"
             enrollment.save(update_fields=[
                 "refund_processed", "refund_processed_at", "refund_note", "status"
@@ -457,7 +511,10 @@ class AdminProcessRefundView(APIView):
                     f'<p>Your refund of <strong>\u20a6{enrollment.amount_paid}</strong> for <strong>{enrollment.course.title}</strong> has been processed.</p></div></div>'
                 ),
             )
-            return Response({"ok": True, "message": "Refund processed."})
+            message = "Refund processed."
+            if not refund_success and refund_message:
+                message += f" Note: {refund_message}"
+            return Response({"ok": True, "message": message})
         except Exception as exc:
             _log_error(f"Refund processing error for {enrollment_id}", exc=exc)
             return Response({"error": "Failed to process refund."},
@@ -501,3 +558,176 @@ class AdminRejectRefundView(APIView):
             _log_error(f"Refund rejection error for {enrollment_id}", exc=exc)
             return Response({"error": "Failed to reject refund."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAYSTACK WEBHOOK
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _verify_paystack_signature(request_body, signature, secret_key):
+    """Verify Paystack webhook signature using HMAC SHA512."""
+    if not signature or not secret_key:
+        return False
+    try:
+        computed = hmac.new(
+            secret_key.encode("utf-8"),
+            request_body,
+            hashlib.sha512,
+        ).hexdigest()
+        return hmac.compare_digest(computed, signature)
+    except Exception:
+        return False
+
+
+def _handle_trainer_activation(reference):
+    """Handle successful trainer activation payment."""
+    try:
+        profile = Profile.objects.filter(
+            payment_reference=reference, role="trainer"
+        ).select_related("user").first()
+        if not profile:
+            _log_warning(f"Webhook: no trainer profile found for reference {reference}")
+            return False
+        if profile.has_paid:
+            return True
+        profile.has_paid = True
+        profile.save(update_fields=["has_paid"])
+        _send_email_async(
+            subject="SAED IMS - Trainer Activation Confirmed",
+            message=f"Hello {profile.user.get_full_name()},\n\nYour trainer account has been activated.",
+            recipient_list=[profile.user.email],
+            html_message=(
+                '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                '<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                '<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                '<h2 style="color:#1a5f2a;margin-top:0;">Trainer Account Activated</h2>'
+                '<p>Your trainer account has been activated. You can now create courses and connect with corps members.</p></div></div>'
+            ),
+        )
+        _log_info(f"Webhook: trainer activation completed for {profile.user.email}")
+        return True
+    except Exception as exc:
+        _log_error(f"Webhook: trainer activation error for {reference}", exc=exc)
+        return False
+
+
+def _handle_course_payment(reference):
+    """Handle successful course payment."""
+    try:
+        enrollment = CourseEnrollment.objects.filter(
+            payment_reference=reference
+        ).select_related("student", "course", "course__trainer").first()
+        if not enrollment:
+            _log_warning(f"Webhook: no enrollment found for reference {reference}")
+            return False
+        if enrollment.payment_verified and enrollment.status == "pending":
+            return True
+        enrollment.payment_verified = True
+        enrollment.status = "pending"
+        enrollment.amount_paid = enrollment.course.price
+        enrollment.save(update_fields=["payment_verified", "status", "amount_paid"])
+        _send_email_async(
+            subject="SAED IMS - Course Payment Received",
+            message=f"Hello {enrollment.student.get_full_name()},\n\nYour payment for \"{enrollment.course.title}\" has been received.",
+            recipient_list=[enrollment.student.email],
+            html_message=(
+                '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                '<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                '<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                '<h2 style="color:#1a5f2a;margin-top:0;">Payment Received</h2>'
+                f'<p>Your payment for <strong>{enrollment.course.title}</strong> has been received. Waiting for trainer confirmation.</p></div></div>'
+            ),
+        )
+        _log_info(f"Webhook: course payment verified for {enrollment.student.email} ({enrollment.course.title})")
+        return True
+    except Exception as exc:
+        _log_error(f"Webhook: course payment error for {reference}", exc=exc)
+        return False
+
+
+@csrf_exempt
+@require_POST
+def paystack_webhook(request):
+    """
+    Handle Paystack webhook events.
+
+    Verifies the webhook signature and processes charge.success events
+    to update payment status server-side.
+    """
+    signature = request.headers.get("X-Paystack-Signature", "")
+    secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
+    request_body = request.body
+
+    if not _verify_paystack_signature(request_body, signature, secret_key):
+        _log_warning("Webhook: invalid signature received")
+        return HttpResponseBadRequest("Invalid signature")
+
+    try:
+        event = json.loads(request_body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return HttpResponseBadRequest("Invalid payload")
+
+    event_type = event.get("event", "")
+    data = event.get("data", {})
+    reference = data.get("reference", "")
+
+    _log_info(f"Webhook: received event {event_type} for reference {reference}")
+
+    if event_type == "charge.success":
+        metadata = data.get("metadata", {})
+        payment_type = metadata.get("type", "")
+
+        if payment_type == "trainer_activation" or reference.startswith("SAED-") and not reference.startswith("SAED-COURSE-"):
+            _handle_trainer_activation(reference)
+        elif payment_type == "course_payment" or reference.startswith("SAED-COURSE-"):
+            _handle_course_payment(reference)
+        else:
+            _log_warning(f"Webhook: unknown payment type for reference {reference}")
+
+    return HttpResponse("OK", status=200)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAYSTACK REFUND API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _paystack_refund(transaction_reference, amount_kobo=None, note=None):
+    """
+    Initiate a refund via Paystack Refund API.
+    Returns (success: bool, message: str).
+    """
+    secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
+    if not secret_key:
+        return False, "Payment not configured"
+
+    payload = {"transaction": transaction_reference}
+    if amount_kobo:
+        payload["amount"] = amount_kobo
+    if note:
+        payload["note"] = note
+
+    api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
+    req = urllib.request.Request(
+        f"{api_url}/refund",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode())
+        if body.get("status"):
+            return True, body.get("message", "Refund initiated")
+        return False, body.get("message", "Refund failed")
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode())
+        except (json.JSONDecodeError, ValueError):
+            body = {"message": f"Refund API error (HTTP {e.code})"}
+        return False, body.get("message", "Refund failed")
+    except urllib.error.URLError:
+        return False, "Unable to connect to refund API"
+    except Exception as exc:
+        _log_error("Paystack refund error", exc=exc)
+        return False, "Refund processing failed"

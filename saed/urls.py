@@ -74,8 +74,6 @@ urlpatterns = [
     path("auth/forgot-password/", views.PasswordResetRequestView.as_view()),
     path("auth/verify-reset-code/", views.VerifyResetCodeView.as_view()),
     path("auth/reset-password/", views.ResetPasswordView.as_view()),
-    path("auth/password-reset/", views.PasswordResetRequestView.as_view()),
-    path("auth/password-reset/confirm/", views.ResetPasswordView.as_view()),
     path("auth/update-profile/", views.UpdateProfileView.as_view()),
 
     # Dashboard
@@ -132,6 +130,7 @@ urlpatterns = [
     path("courses/pay/", views.CoursePayInitializeView.as_view()),
     path("courses/pay/verify/", views.CoursePayVerifyView.as_view()),
     path("courses/<int:course_id>/enrollment-status/", views.CourseEnrollmentStatusView.as_view()),
+    path("webhooks/paystack/", views.paystack_webhook),
 
     path("trainer/enrollments/pending/", views.TrainerPendingEnrollmentsView.as_view()),
     path("trainer/enrollments/<int:enrollment_id>/confirm/", views.TrainerConfirmEnrollmentView.as_view()),
