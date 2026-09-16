@@ -5,8 +5,7 @@ Payment views: Paystack init/verify, enrollments, refunds, webhooks.
 import hashlib
 import hmac
 import json
-import urllib.request
-import urllib.error
+import requests as http_requests
 from django.conf import settings as django_settings
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.utils.crypto import get_random_string
@@ -70,15 +69,15 @@ class PaystackInitializeView(APIView):
         }).encode()
 
         api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
-        req = urllib.request.Request(
-            f"{api_url}/transaction/initialize", data=payload,
-            headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                body = json.loads(resp.read().decode())
+            resp = http_requests.post(
+                f"{api_url}/transaction/initialize",
+                data=payload,
+                headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
+                timeout=30,
+            )
+            body = resp.json()
             if body.get("status"):
                 return Response({
                     "ok": True, "reference": reference,
@@ -88,14 +87,14 @@ class PaystackInitializeView(APIView):
                 })
             return Response({"error": body.get("message", "Payment initialization failed.")},
                             status=status.HTTP_400_BAD_REQUEST)
-        except urllib.error.HTTPError as e:
+        except http_requests.exceptions.HTTPError as e:
             try:
-                body = json.loads(e.read().decode())
+                body = e.response.json()
             except (json.JSONDecodeError, ValueError):
-                body = {"message": f"Payment gateway error (HTTP {e.code})."}
+                body = {"message": f"Payment gateway error (HTTP {e.response.status_code})."}
             return Response({"error": body.get("message", "Payment gateway error.")},
                             status=status.HTTP_400_BAD_REQUEST)
-        except urllib.error.URLError:
+        except http_requests.exceptions.RequestException:
             return Response({"error": "Unable to connect to payment gateway."},
                             status=status.HTTP_502_BAD_GATEWAY)
         except json.JSONDecodeError:
@@ -187,14 +186,14 @@ class CoursePayInitializeView(APIView):
             }).encode()
 
             api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
-            req = urllib.request.Request(
-                f"{api_url}/transaction/initialize", data=payload,
-                headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
-                method="POST",
-            )
 
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                body = json.loads(resp.read().decode())
+            resp = http_requests.post(
+                f"{api_url}/transaction/initialize",
+                data=payload,
+                headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
+                timeout=30,
+            )
+            body = resp.json()
             if body.get("status"):
                 return Response({
                     "ok": True, "reference": reference,
@@ -204,14 +203,14 @@ class CoursePayInitializeView(APIView):
                 })
             return Response({"error": body.get("message", "Payment initialization failed.")},
                             status=status.HTTP_400_BAD_REQUEST)
-        except urllib.error.HTTPError as e:
+        except http_requests.exceptions.HTTPError as e:
             try:
-                body = json.loads(e.read().decode())
+                body = e.response.json()
             except (json.JSONDecodeError, ValueError):
-                body = {"message": f"Payment gateway error (HTTP {e.code})."}
+                body = {"message": f"Payment gateway error (HTTP {e.response.status_code})."}
             return Response({"error": body.get("message", "Payment gateway error.")},
                             status=status.HTTP_400_BAD_REQUEST)
-        except urllib.error.URLError:
+        except http_requests.exceptions.RequestException:
             return Response({"error": "Unable to connect to payment gateway."},
                             status=status.HTTP_502_BAD_GATEWAY)
         except json.JSONDecodeError:
@@ -250,13 +249,13 @@ class CoursePayVerifyView(APIView):
                 return Response({"error": "Payment is not configured."},
                                 status=status.HTTP_503_SERVICE_UNAVAILABLE)
             api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
-            req = urllib.request.Request(
-                f"{api_url}/transaction/verify/{reference}",
-                headers={"Authorization": f"Bearer {secret_key}"},
-            )
             try:
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    body = json.loads(resp.read().decode())
+                resp = http_requests.get(
+                    f"{api_url}/transaction/verify/{reference}",
+                    headers={"Authorization": f"Bearer {secret_key}"},
+                    timeout=30,
+                )
+                body = resp.json()
                 payment = body.get("data", {})
                 expected_kobo = int(float(enrollment.course.price) * 100)
                 valid_payment = (
@@ -707,26 +706,25 @@ def _paystack_refund(transaction_reference, amount_kobo=None, note=None):
         payload["note"] = note
 
     api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
-    req = urllib.request.Request(
-        f"{api_url}/refund",
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = json.loads(resp.read().decode())
+        resp = http_requests.post(
+            f"{api_url}/refund",
+            data=json.dumps(payload),
+            headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
+            timeout=30,
+        )
+        body = resp.json()
         if body.get("status"):
             return True, body.get("message", "Refund initiated")
         return False, body.get("message", "Refund failed")
-    except urllib.error.HTTPError as e:
+    except http_requests.exceptions.HTTPError as e:
         try:
-            body = json.loads(e.read().decode())
+            body = e.response.json()
         except (json.JSONDecodeError, ValueError):
-            body = {"message": f"Refund API error (HTTP {e.code})"}
+            body = {"message": f"Refund API error (HTTP {e.response.status_code})"}
         return False, body.get("message", "Refund failed")
-    except urllib.error.URLError:
+    except http_requests.exceptions.RequestException:
         return False, "Unable to connect to refund API"
     except Exception as exc:
         _log_error("Paystack refund error", exc=exc)

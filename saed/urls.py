@@ -70,6 +70,8 @@ urlpatterns = [
     path("_sys/ops/", views.HiddenAdminSignupView.as_view()),
     path("auth/email-verify/", views.EmailVerifyView.as_view()),
     path("auth/verify-email/", views.EmailVerifyView.as_view()),
+    path("auth/send-code/", views.SendCodeView.as_view()),
+    path("auth/verify-code/", views.VerifyCodeView.as_view()),
     path("auth/resend-verification/", views.ResendVerificationView.as_view()),
     path("auth/forgot-password/", views.PasswordResetRequestView.as_view()),
     path("auth/verify-reset-code/", views.VerifyResetCodeView.as_view()),

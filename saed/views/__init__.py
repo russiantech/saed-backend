@@ -42,6 +42,7 @@ from .auth import (
     HiddenAdminSignupView,
     EmailVerifyView, ResendVerificationView,
     PasswordResetRequestView, VerifyResetCodeView, ResetPasswordView,
+    SendCodeView, VerifyCodeView,
 )
 
 # Profile
