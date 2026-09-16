@@ -67,7 +67,7 @@ class SaedApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_admin_can_create_trainer(self):
+    def test_admin_cannot_create_trainer_via_api(self):
         client = self.login(self.admin)
         response = post_json(
             client,
@@ -80,8 +80,7 @@ class SaedApiTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(User.objects.get(email="new-trainer@example.com").profile.role, "trainer")
+        self.assertEqual(response.status_code, 405)
 
     def test_admin_cannot_create_admin_account(self):
         client = self.login(self.admin)
@@ -96,7 +95,7 @@ class SaedApiTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 405)
         self.assertFalse(User.objects.filter(email="new-admin@example.com").exists())
 
     def test_public_signup_cannot_create_trainer_account(self):
@@ -149,7 +148,7 @@ class SaedApiTests(TestCase):
         client = self.login(self.admin)
         response = patch_json(client, f"/api/manage/users/{self.admin.id}/", {"isActive": False})
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 403)
         self.admin.refresh_from_db()
         self.assertTrue(self.admin.is_active)
 
@@ -314,11 +313,15 @@ class SaedApiTests(TestCase):
         response = post_json(client, "/api/auth/forgot-password/", {"email": "member@example.com"})
         self.assertEqual(response.status_code, 200)
         payload = response.json()
+        token = payload["token"]
+
+        profile = Profile.objects.get(user=self.member)
+        code = profile.password_reset_code
 
         response = post_json(
             client,
-            "/api/auth/password-reset/confirm/",
-            {"uid": payload["uid"], "token": payload["token"], "password": "NewPassword123!"},
+            "/api/auth/reset-password/",
+            {"email": "member@example.com", "token": token, "code": code, "password": "NewPassword123!"},
         )
 
         self.assertEqual(response.status_code, 200)
