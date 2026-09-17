@@ -392,10 +392,8 @@ class EmailVerifyView(APIView):
             if profile.is_email_verified:
                 return Response({"ok": True, "message": "Email is already verified."})
             profile.is_email_verified = True
-            # Keep the current token so duplicate browser requests (including
-            # React Strict Mode's development re-mount) remain idempotent.
-            # A resend replaces it, immediately invalidating the old link.
-            profile.save(update_fields=["is_email_verified"])
+            profile.is_verified = True
+            profile.save(update_fields=["is_email_verified", "is_verified"])
             return Response({"ok": True, "message": "Email verified successfully."})
         except Exception as exc:
             _log_error("Email verification error", exc=exc)
@@ -798,9 +796,10 @@ class VerifyCodeView(APIView):
                                 status=status.HTTP_400_BAD_REQUEST)
 
         profile.is_email_verified = True
+        profile.is_verified = True
         profile.email_verification_code = ""
         profile.email_verification_code_at = None
-        profile.save(update_fields=["is_email_verified", "email_verification_code", "email_verification_code_at"])
+        profile.save(update_fields=["is_email_verified", "is_verified", "email_verification_code", "email_verification_code_at"])
 
         login(request, user, backend="django.contrib.auth.backends.ModelBackend")
         _log_info(f"User {user.id} verified email via code and logged in")

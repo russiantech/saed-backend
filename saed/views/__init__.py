@@ -76,7 +76,8 @@ from .trainers import (
 
 # Payments
 from .payments import (
-    PaystackInitializeView, CoursePayInitializeView, CoursePayVerifyView,
+    PaystackInitializeView, PaystackTrainerVerifyView,
+    CoursePayInitializeView, CoursePayVerifyView,
     CourseEnrollmentStatusView, TrainerPendingEnrollmentsView,
     TrainerConfirmEnrollmentView, TrainerRejectEnrollmentView,
     AdminPendingRefundsView, AdminProcessRefundView, AdminRejectRefundView,

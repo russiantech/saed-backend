@@ -129,6 +129,7 @@ urlpatterns = [
 
     # Payments
     path("paystack/initialize/", views.PaystackInitializeView.as_view()),
+    path("paystack/trainer-verify/", views.PaystackTrainerVerifyView.as_view()),
     path("courses/pay/", views.CoursePayInitializeView.as_view()),
     path("courses/pay/verify/", views.CoursePayVerifyView.as_view()),
     path("courses/<int:course_id>/enrollment-status/", views.CourseEnrollmentStatusView.as_view()),

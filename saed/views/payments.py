@@ -5,7 +5,25 @@ Payment views: Paystack init/verify, enrollments, refunds, webhooks.
 import hashlib
 import hmac
 import json
-import requests as http_requests
+import subprocess
+import warnings
+
+warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+
+def _paystack_request(method, path, data=None, headers=None, timeout=30):
+    """Make an HTTPS request to Paystack using curl (Windows Schannel SSL),
+    bypassing Python's OpenSSL which has SSLV3_ALERT_BAD_RECORD_MAC bugs
+    on Python 3.14 + Windows."""
+    url = f"https://api.paystack.co{path}"
+    cmd = ["curl.exe", "-s", "-X", method, "--max-time", str(timeout), url]
+    for k, v in (headers or {}).items():
+        cmd += ["-H", f"{k}: {v}"]
+    if data is not None:
+        cmd += ["-d", json.dumps(data)]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+    if result.returncode != 0:
+        raise ConnectionError(f"curl failed: {result.stderr}")
+    return json.loads(result.stdout)
 from django.conf import settings as django_settings
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.utils.crypto import get_random_string
@@ -32,7 +50,7 @@ class PaystackInitializeView(APIView):
         if not profile or profile.role != "trainer":
             return Response({"error": "Only trainer accounts can make this payment."},
                             status=status.HTTP_403_FORBIDDEN)
-        if profile.has_paid:
+        if profile.has_paid and profile.is_authorized:
             return Response({"error": "This trainer payment has already been recorded."},
                             status=status.HTTP_400_BAD_REQUEST)
         email = request.user.email
@@ -60,50 +78,97 @@ class PaystackInitializeView(APIView):
         # (kobo), matching PAYSTACK_DEFAULT_AMOUNT and the frontend display.
         amount_kobo = int(amount)
         frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002").rstrip("/")
-        payload = json.dumps({
-            "email": email, "amount": amount_kobo,
-            "reference": reference,
-            "metadata": {"reference": reference, "type": "trainer_activation"},
-            "currency": "NGN",
-            "callback_url": f"{frontend_url}/app/payment/callback?reference={reference}&type=trainer",
-        }).encode()
 
+        last_exc = None
+        for attempt in range(3):
+            try:
+                body = _paystack_request("POST", "/transaction/initialize", data={
+                    "email": email, "amount": amount_kobo,
+                    "reference": reference,
+                    "metadata": {"reference": reference, "type": "trainer_activation"},
+                    "currency": "NGN",
+                    "callback_url": f"{frontend_url}/app/payment/callback?reference={reference}&type=trainer",
+                }, headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"})
+                if body.get("status"):
+                    return Response({
+                        "ok": True, "reference": reference,
+                        "authorization_url": body["data"]["authorization_url"],
+                        "access_code": body["data"]["access_code"],
+                        "message": "Payment initialized.",
+                    })
+                return Response({"error": body.get("message", "Payment initialization failed.")},
+                                status=status.HTTP_400_BAD_REQUEST)
+            except Exception as exc:
+                last_exc = exc
+                _log_error(f"Paystack connect attempt {attempt+1}/3 failed", exc=exc)
+                continue
+
+        _log_error("Paystack all attempts failed", exc=last_exc)
+        return Response({"error": "Unable to connect to payment gateway after retries."},
+                        status=status.HTTP_502_BAD_GATEWAY)
+
+
+class PaystackTrainerVerifyView(APIView):
+    """Verify a trainer activation payment after Paystack redirect."""
+    permission_classes = [IsAuthenticatedAPI]
+
+    def post(self, request):
+        reference = request.data.get("reference")
+        if not reference:
+            return Response({"error": "Reference is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        profile = getattr(request.user, "profile", None)
+        if not profile or profile.role != "trainer":
+            return Response({"error": "Not a trainer account."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if profile.has_paid:
+            return Response({"ok": True, "message": "Already activated."})
+
+        secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
+        if not secret_key:
+            return Response({"error": "Payment is not configured."},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
         api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
 
         try:
-            resp = http_requests.post(
-                f"{api_url}/transaction/initialize",
-                data=payload,
-                headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
-                timeout=30,
+            body = _paystack_request("GET", f"/transaction/verify/{reference}",
+                headers={"Authorization": f"Bearer {secret_key}"})
+            payment = body.get("data", {})
+            expected_kobo = int(getattr(django_settings, "PAYSTACK_DEFAULT_AMOUNT", 50000))
+            valid_payment = (
+                body.get("status") and payment.get("status") == "success"
+                and payment.get("reference") == reference
+                and payment.get("amount") == expected_kobo
+                and payment.get("currency") == "NGN"
             )
-            body = resp.json()
-            if body.get("status"):
-                return Response({
-                    "ok": True, "reference": reference,
-                    "authorization_url": body["data"]["authorization_url"],
-                    "access_code": body["data"]["access_code"],
-                    "message": "Payment initialized.",
-                })
-            return Response({"error": body.get("message", "Payment initialization failed.")},
-                            status=status.HTTP_400_BAD_REQUEST)
-        except http_requests.exceptions.HTTPError as e:
-            try:
-                body = e.response.json()
-            except (json.JSONDecodeError, ValueError):
-                body = {"message": f"Payment gateway error (HTTP {e.response.status_code})."}
-            return Response({"error": body.get("message", "Payment gateway error.")},
-                            status=status.HTTP_400_BAD_REQUEST)
-        except http_requests.exceptions.RequestException:
-            return Response({"error": "Unable to connect to payment gateway."},
-                            status=status.HTTP_502_BAD_GATEWAY)
-        except json.JSONDecodeError:
-            return Response({"error": "Invalid response from payment gateway."},
-                            status=status.HTTP_502_BAD_GATEWAY)
+            if not valid_payment:
+                return Response({"error": "Payment verification failed."},
+                                status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
-            _log_error("Paystack unexpected error", exc=exc)
-            return Response({"error": "Payment initialization failed."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            _log_error("Trainer verify gateway error", exc=exc)
+            return Response({"error": "Unable to verify payment with gateway."},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
+        profile.has_paid = True
+        profile.is_authorized = True
+        profile.authorization_status = "approved"
+        profile.authorized_at = now()
+        profile.payment_verified = True
+        profile.payment_verified_at = now()
+        profile.save(update_fields=["has_paid", "is_authorized", "authorization_status", "authorized_at", "payment_verified", "payment_verified_at"])
+        _send_email_async(
+            subject="SAED IMS - Trainer Activation Confirmed",
+            message=f"Hello {profile.user.get_full_name()},\n\nYour trainer account has been activated.",
+            recipient_list=[profile.user.email],
+            html_message=(
+                '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                '<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                '<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                '<h2 style="color:#1a5f2a;margin-top:0;">Trainer Account Activated</h2>'
+                '<p>Your trainer account has been activated. You can now create courses and connect with corps members.</p></div></div>'
+            ),
+        )
+        return Response({"ok": True, "message": "Trainer account activated."})
 
 
 class CoursePayInitializeView(APIView):
@@ -177,23 +242,15 @@ class CoursePayInitializeView(APIView):
                                 status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             amount_kobo = int(float(course.price) * 100)
-            payload = json.dumps({
+            callback_url = f"{getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3002').rstrip('/')}/app/payment/verify?reference={reference}"
+
+            body = _paystack_request("POST", "/transaction/initialize", data={
                 "email": request.user.email, "amount": amount_kobo,
                 "reference": reference,
                 "currency": "NGN",
                 "metadata": {"reference": reference, "course_id": course.id},
-                "callback_url": f"{getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3002').rstrip('/')}/app/payment/verify?reference={reference}",
-            }).encode()
-
-            api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
-
-            resp = http_requests.post(
-                f"{api_url}/transaction/initialize",
-                data=payload,
-                headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
-                timeout=30,
-            )
-            body = resp.json()
+                "callback_url": callback_url,
+            }, headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"})
             if body.get("status"):
                 return Response({
                     "ok": True, "reference": reference,
@@ -203,19 +260,6 @@ class CoursePayInitializeView(APIView):
                 })
             return Response({"error": body.get("message", "Payment initialization failed.")},
                             status=status.HTTP_400_BAD_REQUEST)
-        except http_requests.exceptions.HTTPError as e:
-            try:
-                body = e.response.json()
-            except (json.JSONDecodeError, ValueError):
-                body = {"message": f"Payment gateway error (HTTP {e.response.status_code})."}
-            return Response({"error": body.get("message", "Payment gateway error.")},
-                            status=status.HTTP_400_BAD_REQUEST)
-        except http_requests.exceptions.RequestException:
-            return Response({"error": "Unable to connect to payment gateway."},
-                            status=status.HTTP_502_BAD_GATEWAY)
-        except json.JSONDecodeError:
-            return Response({"error": "Invalid response from payment gateway."},
-                            status=status.HTTP_502_BAD_GATEWAY)
         except Exception as exc:
             _log_error("Course payment init error", exc=exc)
             return Response({"error": "Payment initialization failed."},
@@ -248,14 +292,9 @@ class CoursePayVerifyView(APIView):
             if not secret_key:
                 return Response({"error": "Payment is not configured."},
                                 status=status.HTTP_503_SERVICE_UNAVAILABLE)
-            api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
             try:
-                resp = http_requests.get(
-                    f"{api_url}/transaction/verify/{reference}",
-                    headers={"Authorization": f"Bearer {secret_key}"},
-                    timeout=30,
-                )
-                body = resp.json()
+                body = _paystack_request("GET", f"/transaction/verify/{reference}",
+                    headers={"Authorization": f"Bearer {secret_key}"})
                 payment = body.get("data", {})
                 expected_kobo = int(float(enrollment.course.price) * 100)
                 valid_payment = (
@@ -590,7 +629,12 @@ def _handle_trainer_activation(reference):
         if profile.has_paid:
             return True
         profile.has_paid = True
-        profile.save(update_fields=["has_paid"])
+        profile.is_authorized = True
+        profile.authorization_status = "approved"
+        profile.authorized_at = now()
+        profile.payment_verified = True
+        profile.payment_verified_at = now()
+        profile.save(update_fields=["has_paid", "is_authorized", "authorization_status", "authorized_at", "payment_verified", "payment_verified_at"])
         _send_email_async(
             subject="SAED IMS - Trainer Activation Confirmed",
             message=f"Hello {profile.user.get_full_name()},\n\nYour trainer account has been activated.",
@@ -705,27 +749,12 @@ def _paystack_refund(transaction_reference, amount_kobo=None, note=None):
     if note:
         payload["note"] = note
 
-    api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
-
     try:
-        resp = http_requests.post(
-            f"{api_url}/refund",
-            data=json.dumps(payload),
-            headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"},
-            timeout=30,
-        )
-        body = resp.json()
+        body = _paystack_request("POST", "/refund", data=payload,
+            headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"})
         if body.get("status"):
             return True, body.get("message", "Refund initiated")
         return False, body.get("message", "Refund failed")
-    except http_requests.exceptions.HTTPError as e:
-        try:
-            body = e.response.json()
-        except (json.JSONDecodeError, ValueError):
-            body = {"message": f"Refund API error (HTTP {e.response.status_code})"}
-        return False, body.get("message", "Refund failed")
-    except http_requests.exceptions.RequestException:
-        return False, "Unable to connect to refund API"
     except Exception as exc:
         _log_error("Paystack refund error", exc=exc)
         return False, "Refund processing failed"
