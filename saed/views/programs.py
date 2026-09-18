@@ -105,7 +105,7 @@ class ApplicationCreateView(APIView):
             enrollment = CourseEnrollment.objects.create(
                 student=request.user,
                 course=course,
-                status="pending",
+                status="confirmed",
             )
             return Response({
                 "application": {

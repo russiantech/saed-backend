@@ -182,17 +182,11 @@ class SaedApiTests(TestCase):
         self.assertTrue(profile.is_email_verified)
 
     @override_settings(PAYSTACK_SECRET_KEY="test_secret")
-    @patch("saed.views.payments.urllib.request.urlopen")
-    def test_course_payment_resumes_blank_pending_enrollment(self, mock_urlopen):
-        class PaymentResponse:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def read(self):
-                return b'{"status": true, "data": {"authorization_url": "https://pay.example/checkout", "access_code": "access"}}'
+    @patch("saed.views.payments.http.client.HTTPSConnection")
+    def test_course_payment_resumes_blank_pending_enrollment(self, mock_conn_cls):
+        mock_conn = mock_conn_cls.return_value
+        mock_response = mock_conn.getresponse.return_value
+        mock_response.read.return_value = b'{"status": true, "data": {"authorization_url": "https://pay.example/checkout", "access_code": "access"}}'
 
         course = Course.objects.create(
             trainer=self.trainer,
@@ -206,7 +200,6 @@ class SaedApiTests(TestCase):
         Connection.objects.create(
             corps_member=self.member, trainer=self.trainer, status="active"
         )
-        mock_urlopen.return_value = PaymentResponse()
 
         response = post_json(self.login(self.member), "/api/courses/pay/", {"courseId": course.id})
 
@@ -418,7 +411,7 @@ class PaymentWebhookTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.enrollment.refresh_from_db()
         self.assertTrue(self.enrollment.payment_verified)
-        self.assertEqual(self.enrollment.status, "pending")
+        self.assertEqual(self.enrollment.status, "confirmed")
 
     def test_webhook_ignores_non_success_events(self):
         client = Client()

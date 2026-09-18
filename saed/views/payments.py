@@ -4,30 +4,54 @@ Payment views: Paystack init/verify, enrollments, refunds, webhooks.
 
 import hashlib
 import hmac
+import http.client
 import json
-import subprocess
+import ssl
 import warnings
 
 warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
-def _paystack_request(method, path, data=None, headers=None, timeout=30):
-    """Make an HTTPS request to Paystack using curl (Windows Schannel SSL),
-    bypassing Python's OpenSSL which has SSLV3_ALERT_BAD_RECORD_MAC bugs
-    on Python 3.14 + Windows."""
-    url = f"https://api.paystack.co{path}"
-    cmd = ["curl.exe", "-s", "-X", method, "--max-time", str(timeout), url]
-    for k, v in (headers or {}).items():
-        cmd += ["-H", f"{k}: {v}"]
-    if data is not None:
-        cmd += ["-d", json.dumps(data)]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
-    if result.returncode != 0:
-        raise ConnectionError(f"curl failed: {result.stderr}")
-    return json.loads(result.stdout)
 from django.conf import settings as django_settings
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.utils.crypto import get_random_string
 from django.utils.timezone import now
+
+
+_paystack_ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
+_paystack_ssl_ctx.check_hostname = False
+_paystack_ssl_ctx.verify_mode = ssl.CERT_NONE
+_paystack_ssl_ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
+try:
+    _paystack_ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+except AttributeError:
+    pass
+
+
+def _paystack_request(method, path, data=None, headers=None, timeout=30):
+    """Make an HTTPS request to Paystack using http.client (avoids requests/SSL issues on Python 3.14)."""
+    url = path
+    body = json.dumps(data) if data else None
+    last_exc = None
+    for attempt in range(3):
+        conn = http.client.HTTPSConnection("api.paystack.co", timeout=timeout, context=_paystack_ssl_ctx)
+        try:
+            conn.request(method, url, body=body, headers=headers or {})
+            resp = conn.getresponse()
+            raw = resp.read().decode("utf-8")
+            conn.close()
+            return json.loads(raw)
+        except Exception as exc:
+            last_exc = exc
+            try:
+                conn.close()
+            except Exception:
+                pass
+            if attempt < 2:
+                import time
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            raise last_exc
+
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from rest_framework.views import APIView
@@ -171,6 +195,115 @@ class PaystackTrainerVerifyView(APIView):
         return Response({"ok": True, "message": "Trainer account activated."})
 
 
+FAST_TRACK_AMOUNT = 2500000  # ₦25,000 in kobo
+
+
+class FastTrackInitializeView(APIView):
+    """Initialize payment for a trainer to enable fast track on their courses."""
+    permission_classes = [IsAuthenticatedAPI]
+
+    def post(self, request):
+        profile = getattr(request.user, "profile", None)
+        if not profile or profile.role != "trainer":
+            return Response({"error": "Only trainers can enable fast track."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if profile.can_upload_fast_track:
+            return Response({"error": "Fast track is already enabled."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
+        if not secret_key:
+            return Response({"error": "Payment is not configured."},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        reference = f"SAED-FT-{get_random_string(12).upper()}"
+        email = request.user.email
+        frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002").rstrip("/")
+
+        last_exc = None
+        for attempt in range(3):
+            try:
+                body = _paystack_request("POST", "/transaction/initialize", data={
+                    "email": email,
+                    "amount": FAST_TRACK_AMOUNT,
+                    "reference": reference,
+                    "currency": "NGN",
+                    "metadata": {"reference": reference, "type": "fast_track"},
+                    "callback_url": f"{frontend_url}/app/payment/callback?reference={reference}&type=fast_track",
+                }, headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"})
+                if body.get("status"):
+                    return Response({
+                        "ok": True,
+                        "reference": reference,
+                        "authorization_url": body["data"]["authorization_url"],
+                        "access_code": body["data"]["access_code"],
+                    })
+                return Response({"error": body.get("message", "Payment initialization failed.")},
+                                status=status.HTTP_400_BAD_REQUEST)
+            except Exception as exc:
+                last_exc = exc
+                _log_error(f"Fast track init attempt {attempt + 1}/3 failed", exc=exc)
+        _log_error("Fast track init failed after 3 attempts", exc=last_exc)
+        return Response({"error": "Payment gateway unreachable."},
+                        status=status.HTTP_502_BAD_GATEWAY)
+
+
+class FastTrackVerifyView(APIView):
+    """Verify fast track payment and enable it for the trainer."""
+    permission_classes = [IsAuthenticatedAPI]
+
+    def post(self, request):
+        reference = request.data.get("reference")
+        if not reference:
+            return Response({"error": "Reference is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        profile = getattr(request.user, "profile", None)
+        if not profile or profile.role != "trainer":
+            return Response({"error": "Not a trainer account."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if profile.can_upload_fast_track:
+            return Response({"ok": True, "message": "Fast track already enabled."})
+
+        secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
+        if not secret_key:
+            return Response({"error": "Payment is not configured."},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            body = _paystack_request("GET", f"/transaction/verify/{reference}",
+                headers={"Authorization": f"Bearer {secret_key}"})
+            payment = body.get("data", {})
+            valid_payment = (
+                body.get("status") and payment.get("status") == "success"
+                and payment.get("reference") == reference
+                and payment.get("amount") == FAST_TRACK_AMOUNT
+                and payment.get("currency") == "NGN"
+            )
+            if not valid_payment:
+                return Response({"error": "Payment verification failed."},
+                                status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            _log_error("Fast track verify gateway error", exc=exc)
+            return Response({"error": "Unable to verify payment with gateway."},
+                            status=status.HTTP_502_BAD_GATEWAY)
+
+        profile.can_upload_fast_track = True
+        profile.save(update_fields=["can_upload_fast_track"])
+        _send_email_async(
+            subject="SAED IMS - Fast Track Enabled",
+            message=f"Hello {profile.user.get_full_name()},\n\nFast track has been enabled for your courses.",
+            recipient_list=[profile.user.email],
+            html_message=(
+                '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                '<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
+                '<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                '<h2 style="color:#1a5f2a;margin-top:0;">Fast Track Enabled</h2>'
+                '<p>Fast track has been enabled. You can now upload fast track videos for your courses.</p></div></div>'
+            ),
+        )
+        return Response({"ok": True, "message": "Fast track enabled."})
+
+
 class CoursePayInitializeView(APIView):
     permission_classes = [HasRole("corps_member")]
 
@@ -210,16 +343,8 @@ class CoursePayInitializeView(APIView):
             if enrollment.status == "confirmed":
                 return Response({"error": "You already have access to this course."},
                                 status=status.HTTP_400_BAD_REQUEST)
-            # A newly-created enrollment starts as ``pending`` before this
-            # view assigns its Paystack reference. Only block an enrollment
-            # that already has a reference (i.e. one actually submitted for
-            # trainer review). A blank reference is an interrupted checkout
-            # and can safely be resumed.
-            if enrollment.status == "pending" and enrollment.payment_reference:
-                return Response({"error": "Payment already pending trainer confirmation.", "pending": True},
-                                status=status.HTTP_400_BAD_REQUEST)
             if enrollment.status == "refunded":
-                enrollment.status = "pending"
+                enrollment.status = "confirmed"
                 enrollment.refund_requested = False
                 enrollment.refund_requested_at = None
                 enrollment.refund_processed = False
@@ -284,7 +409,7 @@ class CoursePayVerifyView(APIView):
                 return Response({"error": "Payment record not found."},
                                 status=status.HTTP_404_NOT_FOUND)
             if enrollment.status == "pending" and enrollment.payment_verified:
-                return Response({"ok": True, "message": "Payment already pending trainer confirmation."})
+                return Response({"ok": True, "message": "Payment is being processed."})
             if enrollment.status == "confirmed":
                 return Response({"ok": True, "message": "Already verified."})
 
@@ -312,11 +437,11 @@ class CoursePayVerifyView(APIView):
                 return Response({"error": "Unable to verify payment with gateway."},
                                 status=status.HTTP_502_BAD_GATEWAY)
 
-            enrollment.status = "pending"
+            enrollment.status = "confirmed"
             enrollment.payment_verified = True
             enrollment.amount_paid = enrollment.course.price
             enrollment.save(update_fields=["status", "payment_verified", "amount_paid"])
-            return Response({"ok": True, "message": "Payment submitted. Waiting for trainer confirmation."})
+            return Response({"ok": True, "message": "Payment confirmed. You are enrolled."})
         except Exception as exc:
             _log_error("Payment verification error", exc=exc)
             return Response({"error": "Payment verification failed."},
@@ -339,139 +464,6 @@ class CourseEnrollmentStatusView(APIView):
         except Exception as exc:
             _log_error("Enrollment status error", exc=exc)
             return Response({"error": "Failed to check enrollment."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class TrainerPendingEnrollmentsView(APIView):
-    permission_classes = [HasRole("trainer")]
-
-    def get(self, request):
-        try:
-            enrollments = CourseEnrollment.objects.filter(
-                course__trainer=request.user, status="pending", payment_verified=True
-            ).select_related("student", "course")
-            result = []
-            for e in enrollments:
-                result.append({
-                    "id": e.id,
-                    "studentName": e.student.get_full_name() or e.student.email,
-                    "studentEmail": e.student.email,
-                    "courseTitle": e.course.title,
-                    "courseId": e.course.id,
-                    "amount": str(e.amount_paid),
-                    "paymentReference": e.payment_reference,
-                    "enrolledAt": e.enrolled_at.isoformat(),
-                })
-            return Response({"enrollments": result})
-        except Exception as exc:
-            _log_error("Pending enrollments error", exc=exc)
-            return Response({"error": "Failed to load enrollments."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class TrainerConfirmEnrollmentView(APIView):
-    permission_classes = [HasRole("trainer")]
-
-    def post(self, request, enrollment_id):
-        try:
-            enrollment = CourseEnrollment.objects.select_related(
-                "student", "course"
-            ).get(id=enrollment_id, course__trainer=request.user, status="pending", payment_verified=True)
-        except CourseEnrollment.DoesNotExist:
-            return Response({"error": "Enrollment not found."},
-                            status=status.HTTP_404_NOT_FOUND)
-        try:
-            enrollment.status = "confirmed"
-            enrollment.confirmed_by = request.user
-            enrollment.confirmed_at = now()
-            enrollment.save(update_fields=["status", "confirmed_by", "confirmed_at"])
-
-            _send_email_async(
-                subject="SAED IMS - Course Enrollment Confirmed",
-                message=f"Hello {enrollment.student.get_full_name()},\n\nYour payment for \"{enrollment.course.title}\" has been confirmed.",
-                recipient_list=[enrollment.student.email],
-                from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#1a5f2a;margin-top:0;">Enrollment Confirmed</h2>'
-                    f'<p>Your payment for <strong>{enrollment.course.title}</strong> has been confirmed.</p></div></div>'
-                ),
-            )
-            return Response({"ok": True, "message": "Enrollment confirmed."})
-        except Exception as exc:
-            _log_error(f"Enrollment confirmation error for {enrollment_id}", exc=exc)
-            return Response({"error": "Failed to confirm enrollment."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class TrainerRejectEnrollmentView(APIView):
-    permission_classes = [HasRole("trainer")]
-
-    def post(self, request, enrollment_id):
-        try:
-            enrollment = CourseEnrollment.objects.select_related(
-                "student", "course"
-            ).get(id=enrollment_id, course__trainer=request.user, status="pending", payment_verified=True)
-        except CourseEnrollment.DoesNotExist:
-            return Response({"error": "Enrollment not found."},
-                            status=status.HTTP_404_NOT_FOUND)
-        try:
-            enrollment.status = "rejected"
-            enrollment.confirmed_by = request.user
-            enrollment.confirmed_at = now()
-            enrollment.refund_requested = True
-            enrollment.refund_requested_at = now()
-            enrollment.save(update_fields=[
-                "status", "confirmed_by", "confirmed_at",
-                "refund_requested", "refund_requested_at",
-            ])
-
-            _send_email_async(
-                subject="SAED IMS - Course Payment Not Verified",
-                message=f"Hello {enrollment.student.get_full_name()},\n\nYour payment could not be verified. A refund has been initiated.",
-                recipient_list=[enrollment.student.email],
-                from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#c0392b;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#c0392b;margin-top:0;">Payment Not Verified</h2>'
-                    f'<p>Your payment for <strong>{enrollment.course.title}</strong> could not be verified. A refund of <strong>\u20a6{enrollment.amount_paid}</strong> has been initiated.</p></div></div>'
-                ),
-            )
-            _notify_admins(
-                title="Refund Required",
-                message=f"Payment rejected for {enrollment.student.get_full_name()} ({enrollment.course.title}).",
-                reason="admin_update",
-            )
-            _notify_admins_email(
-                subject=f"Refund Required - {enrollment.course.title}",
-                message=(
-                    f"A payment has been rejected and a refund is required.\n"
-                    f"Student: {enrollment.student.get_full_name()}\n"
-                    f"Course: {enrollment.course.title}\n"
-                    f"Amount: {enrollment.amount_paid}"
-                ),
-                email_type="payment",
-                from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#c0392b;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#c0392b;margin-top:0;">Refund Required</h2>'
-                    f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Student</td><td style="padding:8px;">{enrollment.student.get_full_name()}</td></tr>'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Course</td><td style="padding:8px;">{enrollment.course.title}</td></tr>'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Amount</td><td style="padding:8px;">\u20a6{enrollment.amount_paid}</td></tr>'
-                    f'</table></div></div>'
-                ),
-            )
-            return Response({"ok": True, "message": "Enrollment rejected. Refund flagged."})
-        except Exception as exc:
-            _log_error(f"Enrollment rejection error for {enrollment_id}", exc=exc)
-            return Response({"error": "Failed to reject enrollment."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -663,10 +655,10 @@ def _handle_course_payment(reference):
         if not enrollment:
             _log_warning(f"Webhook: no enrollment found for reference {reference}")
             return False
-        if enrollment.payment_verified and enrollment.status == "pending":
+        if enrollment.payment_verified and enrollment.status == "confirmed":
             return True
         enrollment.payment_verified = True
-        enrollment.status = "pending"
+        enrollment.status = "confirmed"
         enrollment.amount_paid = enrollment.course.price
         enrollment.save(update_fields=["payment_verified", "status", "amount_paid"])
         _send_email_async(
@@ -678,7 +670,7 @@ def _handle_course_payment(reference):
                 '<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
                 '<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
                 '<h2 style="color:#1a5f2a;margin-top:0;">Payment Received</h2>'
-                f'<p>Your payment for <strong>{enrollment.course.title}</strong> has been received. Waiting for trainer confirmation.</p></div></div>'
+                f'<p>Your payment for <strong>{enrollment.course.title}</strong> has been received. You are now enrolled.</p></div></div>'
             ),
         )
         _log_info(f"Webhook: course payment verified for {enrollment.student.email} ({enrollment.course.title})")

@@ -10,7 +10,7 @@ from django.conf import settings as django_settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from ..models import Connection, Course, CourseEnrollment, FastTrackVideo, Profile
+from ..models import Connection, Course, CourseEnrollment, FastTrackVideo, Profile, Module, Lesson, LessonProgress
 from .base import (
     _log_error, _log_info, _log_warning,
     read_json, _safe_int, course_payload, fast_track_video_payload,
@@ -59,6 +59,8 @@ class TraineeFastTrackCoursesView(APIView):
                 is_busy = profile.is_busy_corper if profile else False
                 if not is_busy:
                     videos = videos.filter(is_free_preview=True)
+                lesson_count = Lesson.objects.filter(module__course=c).count()
+                content_count = videos.count() + lesson_count
                 enrollment_status = None
                 if c.id in enrolled_ids:
                     enrollment_status = "confirmed"
@@ -70,7 +72,7 @@ class TraineeFastTrackCoursesView(APIView):
                     enrollment_status = "refunded"
                 result.append({
                     **course_payload(c),
-                    "videoCount": videos.count(),
+                    "videoCount": content_count,
                     "isEnrolled": c.id in enrolled_ids,
                     "isPending": c.id in pending_ids,
                     "isRejected": c.id in rejected_ids,
@@ -195,12 +197,12 @@ class FastTrackVideosForCourseView(APIView):
                 return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
 
             if not course.has_fast_track:
-                return Response({"videos": [], "error": "Fast track is not enabled for this course."})
+                return Response({"videos": [], "modules": [], "error": "Fast track is not enabled for this course."})
 
             if not Connection.objects.filter(
                 corps_member=user, trainer=course.trainer, status="active"
             ).exists():
-                return Response({"error": "Connect with this course's trainer to access its videos."},
+                return Response({"error": "Connect with this course's trainer to access its content."},
                                 status=status.HTTP_403_FORBIDDEN)
 
             is_enrolled = False
@@ -209,26 +211,64 @@ class FastTrackVideosForCourseView(APIView):
                     student=user, course=course, status="confirmed"
                 ).exists()
 
-            videos = FastTrackVideo.objects.select_related("course").filter(course=course)
+            from ..models import Module, Lesson
 
+            modules = Module.objects.filter(course=course, is_active=True).prefetch_related("lessons")
+            module_list = []
+            for m in modules:
+                lessons_qs = m.lessons.all()
+                if course.price > 0 and not is_enrolled:
+                    lessons_qs = lessons_qs.filter(is_free_preview=True)
+                module_list.append({
+                    "id": m.id,
+                    "title": m.title,
+                    "description": m.description,
+                    "order": m.order,
+                    "lessons": [{
+                        "id": l.id,
+                        "title": l.title,
+                        "description": l.description,
+                        "contentType": l.content_type,
+                        "videoUrl": l.video_url,
+                        "textContent": l.text_content,
+                        "documentUrl": l.document_url,
+                        "durationSeconds": l.duration_seconds,
+                        "order": l.order,
+                        "isFreePreview": l.is_free_preview,
+                    } for l in lessons_qs],
+                })
+
+            videos = FastTrackVideo.objects.select_related("course").filter(course=course)
             if course.price > 0 and not is_enrolled:
                 videos = videos.filter(is_free_preview=True)
+            video_list = [{
+                "id": v.id,
+                "title": v.title,
+                "description": v.description,
+                "videoUrl": v.video_url,
+                "durationSeconds": v.duration_seconds,
+                "price": str(v.price),
+                "isFreePreview": v.is_free_preview,
+            } for v in videos]
 
-            result = []
-            for v in videos:
-                result.append({
-                    "id": v.id,
-                    "title": v.title,
-                    "description": v.description,
-                    "videoUrl": v.video_url,
-                    "durationSeconds": v.duration_seconds,
-                    "price": str(v.price),
-                    "isFreePreview": v.is_free_preview,
-                })
-            return Response({"videos": result, "isEnrolled": is_enrolled})
+            completed_lesson_ids = []
+            if user.is_authenticated:
+                lesson_ids = [l["id"] for m in module_list for l in m.get("lessons", [])]
+                completed_lesson_ids = list(
+                    LessonProgress.objects.filter(
+                        student=user, lesson_id__in=lesson_ids
+                    ).values_list("lesson_id", flat=True)
+                )
+
+            return Response({
+                "videos": video_list,
+                "modules": module_list,
+                "isEnrolled": is_enrolled,
+                "completedLessonIds": completed_lesson_ids,
+            })
         except Exception as exc:
             _log_error("Fast track videos for course error", exc=exc)
-            return Response({"error": "Failed to load videos."},
+            return Response({"error": "Failed to load content."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

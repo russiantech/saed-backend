@@ -426,6 +426,11 @@ def program_payload(course):
 
 def application_payload(enrollment):
     """Returns an enrollment in the format the frontend expects as an 'application'."""
+    from ..models import Lesson, LessonProgress
+    total = Lesson.objects.filter(module__course=enrollment.course, module__is_active=True).count()
+    completed = LessonProgress.objects.filter(
+        student=enrollment.student, lesson__module__course=enrollment.course
+    ).count()
     return {
         "id": enrollment.id,
         "status": enrollment.status,
@@ -436,6 +441,9 @@ def application_payload(enrollment):
         "type": "course_enrollment",
         "amountPaid": str(enrollment.amount_paid),
         "paymentVerified": enrollment.payment_verified,
+        "totalLessons": total,
+        "completedLessons": completed,
+        "progressPercentage": round(completed / total * 100) if total else 0,
     }
 
 
@@ -544,4 +552,35 @@ def fast_track_video_payload(video):
         "price": str(video.price),
         "isFreePreview": video.is_free_preview,
         "createdAt": video.created_at.isoformat(),
+    }
+
+
+def lesson_payload(lesson):
+    return {
+        "id": lesson.id,
+        "moduleId": lesson.module_id,
+        "title": lesson.title,
+        "description": lesson.description,
+        "contentType": lesson.content_type,
+        "videoUrl": lesson.video_url,
+        "textContent": lesson.text_content,
+        "documentUrl": lesson.document_url,
+        "durationSeconds": lesson.duration_seconds,
+        "order": lesson.order,
+        "isFreePreview": lesson.is_free_preview,
+        "createdAt": lesson.created_at.isoformat(),
+    }
+
+
+def module_payload(module):
+    return {
+        "id": module.id,
+        "courseId": module.course_id,
+        "title": module.title,
+        "description": module.description,
+        "order": module.order,
+        "isActive": module.is_active,
+        "lessonCount": module.lessons.count(),
+        "lessons": [lesson_payload(l) for l in module.lessons.all()],
+        "createdAt": module.created_at.isoformat(),
     }

@@ -9,7 +9,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Connection, Course, CourseEnrollment, FastTrackVideo
+from ..models import Connection, Course, CourseEnrollment, FastTrackVideo, Lesson, LessonProgress, Module
 from .base import (
     _log_error, _notify_user,
     _safe_float, _resolve_course_dates, _parse_date,
@@ -245,4 +245,50 @@ class CourseDetailView(APIView):
                 }
                 for v in videos
             ],
+        })
+
+
+class CourseProgressView(APIView):
+    permission_classes = [IsAuthenticatedAPI]
+
+    def get(self, request, course_id):
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        total = Lesson.objects.filter(module__course=course, module__is_active=True).count()
+        completed = LessonProgress.objects.filter(
+            student=request.user, lesson__module__course=course
+        ).count()
+        percentage = round(completed / total * 100) if total else 0
+        return Response({
+            "totalLessons": total,
+            "completedLessons": completed,
+            "percentage": percentage,
+        })
+
+
+class LessonCompleteView(APIView):
+    permission_classes = [IsAuthenticatedAPI]
+
+    def post(self, request, course_id, lesson_id):
+        try:
+            lesson = Lesson.objects.get(id=lesson_id, module__course_id=course_id)
+        except Lesson.DoesNotExist:
+            return Response({"error": "Lesson not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not CourseEnrollment.objects.filter(
+            student=request.user, course_id=course_id, status="confirmed"
+        ).exists():
+            return Response({"error": "You are not enrolled in this course."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        progress, created = LessonProgress.objects.get_or_create(
+            student=request.user, lesson=lesson
+        )
+        return Response({
+            "ok": True,
+            "completed": True,
+            "alreadyCompleted": not created,
         })

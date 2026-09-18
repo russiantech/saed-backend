@@ -12,6 +12,7 @@ from .base import (
     program_categories_payload, trainer_payload, trainers_payload,
     managed_programs_for, managed_applications_for, trainer_program_payload,
     course_payload, connection_payload, fast_track_video_payload,
+    module_payload, lesson_payload,
     IsAuthenticatedAPI, HasRole, IsAuthorizedTrainer,
 )
 
@@ -63,7 +64,7 @@ from .users import ManageUsersView, ManageUserDetailView
 from .courses import (
     CourseListView, ManageCoursesView, ManageCourseDetailView,
     AdminCoursesView, RestrictCourseView, UnrestrictCourseView,
-    CourseDetailView,
+    CourseDetailView, CourseProgressView, LessonCompleteView,
 )
 
 # Trainers
@@ -77,9 +78,9 @@ from .trainers import (
 # Payments
 from .payments import (
     PaystackInitializeView, PaystackTrainerVerifyView,
+    FastTrackInitializeView, FastTrackVerifyView,
     CoursePayInitializeView, CoursePayVerifyView,
-    CourseEnrollmentStatusView, TrainerPendingEnrollmentsView,
-    TrainerConfirmEnrollmentView, TrainerRejectEnrollmentView,
+    CourseEnrollmentStatusView,
     AdminPendingRefundsView, AdminProcessRefundView, AdminRejectRefundView,
     paystack_webhook,
 )
@@ -89,6 +90,12 @@ from .fast_track import (
     TraineeFastTrackCoursesView, ManageFastTrackVideosView,
     ManageFastTrackVideoDetailView, FastTrackVideosForCourseView,
     FetchVideoDurationView,
+)
+
+# Modules & Lessons
+from .modules import (
+    ManageModulesView, ManageModuleDetailView,
+    ManageLessonsView, ManageLessonDetailView,
 )
 
 # Notifications

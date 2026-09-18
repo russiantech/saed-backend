@@ -127,17 +127,23 @@ urlpatterns = [
     path("trainee/fast-track-courses/", views.TraineeFastTrackCoursesView.as_view()),
     path("manage/fetch-video-duration/", views.FetchVideoDurationView.as_view()),
 
+    # Modules & Lessons
+    path("manage/modules/", views.ManageModulesView.as_view()),
+    path("manage/modules/<int:module_id>/", views.ManageModuleDetailView.as_view()),
+    path("manage/lessons/", views.ManageLessonsView.as_view()),
+    path("manage/lessons/<int:lesson_id>/", views.ManageLessonDetailView.as_view()),
+
     # Payments
     path("paystack/initialize/", views.PaystackInitializeView.as_view()),
     path("paystack/trainer-verify/", views.PaystackTrainerVerifyView.as_view()),
+    path("paystack/fast-track-init/", views.FastTrackInitializeView.as_view()),
+    path("paystack/fast-track-verify/", views.FastTrackVerifyView.as_view()),
     path("courses/pay/", views.CoursePayInitializeView.as_view()),
     path("courses/pay/verify/", views.CoursePayVerifyView.as_view()),
     path("courses/<int:course_id>/enrollment-status/", views.CourseEnrollmentStatusView.as_view()),
+    path("courses/<int:course_id>/progress/", views.CourseProgressView.as_view()),
+    path("courses/<int:course_id>/lessons/<int:lesson_id>/complete/", views.LessonCompleteView.as_view()),
     path("webhooks/paystack/", views.paystack_webhook),
-
-    path("trainer/enrollments/pending/", views.TrainerPendingEnrollmentsView.as_view()),
-    path("trainer/enrollments/<int:enrollment_id>/confirm/", views.TrainerConfirmEnrollmentView.as_view()),
-    path("trainer/enrollments/<int:enrollment_id>/reject/", views.TrainerRejectEnrollmentView.as_view()),
 
     path("admin/refunds/pending/", views.AdminPendingRefundsView.as_view()),
     path("admin/refunds/<int:enrollment_id>/process/", views.AdminProcessRefundView.as_view()),

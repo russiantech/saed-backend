@@ -121,6 +121,59 @@ class Course(models.Model):
         return self.title
 
 
+class Module(models.Model):
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="modules")
+    title = models.CharField(max_length=150)
+    description = models.TextField(blank=True)
+    order = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["order"]
+
+    def __str__(self):
+        return f"{self.course.title} - {self.title}"
+
+
+class Lesson(models.Model):
+    CONTENT_TYPE_CHOICES = [
+        ("video", "Video"),
+        ("text", "Text"),
+        ("quiz", "Quiz"),
+        ("document", "Document"),
+    ]
+    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name="lessons")
+    title = models.CharField(max_length=150)
+    description = models.TextField(blank=True)
+    content_type = models.CharField(max_length=16, choices=CONTENT_TYPE_CHOICES, default="video")
+    video_url = models.URLField(blank=True)
+    text_content = models.TextField(blank=True)
+    document_url = models.URLField(blank=True)
+    duration_seconds = models.PositiveIntegerField(default=0)
+    order = models.PositiveSmallIntegerField(default=0)
+    is_free_preview = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["order"]
+
+    def __str__(self):
+        return f"{self.module.title} - {self.title}"
+
+
+class LessonProgress(models.Model):
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="lesson_progress")
+    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name="progress")
+    completed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("student", "lesson")
+
+    def __str__(self):
+        return f"{self.student} - {self.lesson}"
+
+
 class FastTrackVideo(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="videos")
     title = models.CharField(max_length=120)
