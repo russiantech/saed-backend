@@ -60,6 +60,7 @@ class TraineeFastTrackCoursesView(APIView):
                 if not is_busy:
                     videos = videos.filter(is_free_preview=True)
                 lesson_count = Lesson.objects.filter(module__course=c).count()
+                module_count = Module.objects.filter(course=c).count()
                 content_count = videos.count() + lesson_count
                 enrollment_status = None
                 if c.id in enrolled_ids:
@@ -73,6 +74,7 @@ class TraineeFastTrackCoursesView(APIView):
                 result.append({
                     **course_payload(c),
                     "videoCount": content_count,
+                    "moduleCount": module_count,
                     "isEnrolled": c.id in enrolled_ids,
                     "isPending": c.id in pending_ids,
                     "isRejected": c.id in rejected_ids,
