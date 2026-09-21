@@ -108,6 +108,10 @@ class ManageLessonsView(APIView):
         except Module.DoesNotExist:
             return Response({"error": "Module not found."},
                             status=status.HTTP_404_NOT_FOUND)
+        content_type = data.get("contentType", "text")
+        if content_type == "video" and not module.course.has_fast_track:
+            return Response({"error": "Video content requires fast track to be enabled."},
+                            status=status.HTTP_400_BAD_REQUEST)
         order = data.get("order") or (module.lessons.count() + 1)
         lesson = Lesson.objects.create(
             module=module,
@@ -135,6 +139,9 @@ class ManageLessonDetailView(APIView):
             return Response({"error": "Lesson not found."},
                             status=status.HTTP_404_NOT_FOUND)
         data = request.data
+        if "contentType" in data and data["contentType"] == "video" and not lesson.module.course.has_fast_track:
+            return Response({"error": "Video content requires fast track to be enabled."},
+                            status=status.HTTP_400_BAD_REQUEST)
         for field in ("title", "description", "video_url", "text_content",
                        "document_url", "duration_seconds", "order"):
             camel = {
