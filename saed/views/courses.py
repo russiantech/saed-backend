@@ -38,7 +38,7 @@ class ManageCoursesView(APIView):
 
     def get(self, request):
         try:
-            courses = Course.objects.filter(trainer=request.user).order_by("-created_at")
+            courses = Course.objects.select_related("trainer", "trainer__profile").filter(trainer=request.user).order_by("-created_at")
             return Response({"courses": [course_payload(c) for c in courses]})
         except Exception as exc:
             _log_error("Course list error", exc=exc)
