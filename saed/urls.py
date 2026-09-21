@@ -133,6 +133,9 @@ urlpatterns = [
     path("manage/lessons/", views.ManageLessonsView.as_view()),
     path("manage/lessons/<int:lesson_id>/", views.ManageLessonDetailView.as_view()),
 
+    # Media upload
+    path("media/upload/", views.MediaUploadView.as_view()),
+
     # Payments
     path("paystack/initialize/", views.PaystackInitializeView.as_view()),
     path("paystack/trainer-verify/", views.PaystackTrainerVerifyView.as_view()),

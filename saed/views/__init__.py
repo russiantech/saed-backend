@@ -98,6 +98,9 @@ from .modules import (
     ManageLessonsView, ManageLessonDetailView,
 )
 
+# Media upload
+from .base import MediaUploadView
+
 # Notifications
 from .notifications import (
     NotificationListView, NotificationMarkReadView, NotificationMarkAllReadView,

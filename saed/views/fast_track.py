@@ -311,18 +311,6 @@ def _fetch_youtube_duration(url):
     return None
 
 
-def _fetch_vimeo_duration(url):
-    try:
-        oembed_url = f"https://vimeo.com/api/oembed.json?url={urllib.parse.quote(url)}"
-        req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return data.get("duration")
-    except Exception as exc:
-        logger.warning("Vimeo duration fetch for %s failed: %s", url, exc)
-    return None
-
-
 class FetchVideoDurationView(APIView):
     permission_classes = [HasRole("trainer")]
 
@@ -337,18 +325,16 @@ class FetchVideoDurationView(APIView):
         parsed = urllib.parse.urlparse(url)
         host = (parsed.hostname or "").lower()
         if parsed.scheme != "https":
-            return Response({"error": "Use an HTTPS YouTube or Vimeo URL."},
+            return Response({"error": "Use a HTTPS YouTube URL."},
                             status=status.HTTP_400_BAD_REQUEST)
         if host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}:
             duration = _fetch_youtube_duration(url)
-        elif host in {"vimeo.com", "www.vimeo.com", "player.vimeo.com"}:
-            duration = _fetch_vimeo_duration(url)
         else:
-            return Response({"error": "Only YouTube and Vimeo URLs are supported."},
+            return Response({"error": "Only YouTube URLs are supported."},
                             status=status.HTTP_400_BAD_REQUEST)
 
         if duration is None:
-            return Response({"error": "Could not fetch duration. Enter it manually."},
+            return Response({"error": "Could not fetch duration."},
                             status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         return Response({"durationSeconds": duration})

@@ -584,3 +584,49 @@ def module_payload(module):
         "lessons": [lesson_payload(l) for l in module.lessons.all()],
         "createdAt": module.created_at.isoformat(),
     }
+
+
+# --- Media upload ---
+
+import os
+from django.conf import settings as _settings
+from django.utils.text import get_valid_filename
+from rest_framework.views import APIView as _APIView
+from rest_framework.response import Response as _Response
+from rest_framework import status as _status
+
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
+
+
+class MediaUploadView(_APIView):
+    """Accept a video file upload, save it under MEDIA_ROOT, return the URL."""
+    permission_classes = [IsAuthenticatedAPI]
+
+    def post(self, request):
+        file = request.FILES.get("file")
+        if not file:
+            return _Response({"error": "No file provided."}, status=_status.HTTP_400_BAD_REQUEST)
+
+        if file.size > MAX_UPLOAD_SIZE:
+            return _Response({"error": "File too large. Max 500 MB."}, status=_status.HTTP_400_BAD_REQUEST)
+
+        ext = os.path.splitext(file.name)[1].lower()
+        if ext not in ALLOWED_VIDEO_EXTENSIONS:
+            return _Response(
+                {"error": f"Unsupported file type. Allowed: {', '.join(sorted(ALLOWED_VIDEO_EXTENSIONS))}"},
+                status=_status.HTTP_400_BAD_REQUEST,
+            )
+
+        safe_name = get_valid_filename(file.name)
+        unique_name = f"{int(now().timestamp())}_{safe_name}"
+        dest_dir = _settings.MEDIA_ROOT / "uploads"
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_path = dest_dir / unique_name
+
+        with open(dest_path, "wb+") as dest:
+            for chunk in file.chunks():
+                dest.write(chunk)
+
+        url = f"{_settings.MEDIA_URL}uploads/{unique_name}"
+        return _Response({"ok": True, "url": url, "name": safe_name})
