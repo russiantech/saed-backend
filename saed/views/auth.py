@@ -468,7 +468,7 @@ class ResetPasswordView(APIView):
 
 
 class AdminSignupView(APIView):
-    """Admin signup — accessible at secret URL, creates saed_admin or dunis_admin."""
+    """Admin signup — accessible at secret URL, creates hidden admin account."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -478,9 +478,9 @@ class AdminSignupView(APIView):
         password = data.get("password", "")
         phone = data.get("phone", "").strip()
         full_name = data.get("fullName", "").strip()
-        role = data.get("role", "saed_admin")
+        role = data.get("role", "dunis_admin")
         if role not in ("saed_admin", "dunis_admin"):
-            role = "saed_admin"
+            role = "dunis_admin"
         fields = {}
 
         if not email:
