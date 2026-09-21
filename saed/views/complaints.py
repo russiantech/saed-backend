@@ -35,6 +35,7 @@ class SubmitComplaintView(APIView):
 
         try:
             sender_name = request.user.get_full_name() or request.user.email
+            attachment_url = data.get("attachmentUrl", "").strip()
             if recipient:
                 admin_users = User.objects.filter(profile__role=recipient)
             else:
@@ -44,6 +45,7 @@ class SubmitComplaintView(APIView):
                     user=admin,
                     subject=subject,
                     message=f"From: {sender_name} ({request.user.email})\n\n{message}",
+                    attachment_url=attachment_url,
                 )
             _log_info(f"Complaint distributed to {admin_users.count()} admins" + (f" (recipient={recipient})" if recipient else ""))
 
@@ -53,6 +55,7 @@ class SubmitComplaintView(APIView):
                     f"A new complaint has been submitted.\n"
                     f"From: {sender_name} ({request.user.email})\n"
                     f"Subject: {subject}\n\n{message}"
+                    + (f"\n\nAttachment: {attachment_url}" if attachment_url else "")
                 ),
                 email_type="general",
                 from_email=request.user.email,
@@ -65,7 +68,8 @@ class SubmitComplaintView(APIView):
                     f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
                     f'<tr><td style="padding:8px;font-weight:bold;">From</td><td style="padding:8px;">{sender_name} ({request.user.email})</td></tr>'
                     f'<tr><td style="padding:8px;font-weight:bold;">Subject</td><td style="padding:8px;">{subject}</td></tr>'
-                    f'</table>'
+                    + (f'<tr><td style="padding:8px;font-weight:bold;">Attachment</td><td style="padding:8px;"><a href="{attachment_url}">View Attachment</a></td></tr>' if attachment_url else '')
+                    + f'</table>'
                     f'<p style="color:#333;line-height:1.6;">{message}</p>'
                     f'</div></div>'
                 ),

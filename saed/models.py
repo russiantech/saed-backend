@@ -302,6 +302,7 @@ class Complaint(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="complaints")
     subject = models.CharField(max_length=200)
     message = models.TextField()
+    attachment_url = models.URLField(blank=True, default="")
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="open")
     created_at = models.DateTimeField(auto_now_add=True)
 

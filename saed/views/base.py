@@ -596,11 +596,13 @@ from rest_framework.response import Response as _Response
 from rest_framework import status as _status
 
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+ALLOWED_DOC_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt", ".ppt", ".pptx", ".xls", ".xlsx"}
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
 
 
 class MediaUploadView(_APIView):
-    """Accept a video file upload, save it under MEDIA_ROOT, return the URL."""
+    """Accept a file upload, save it under MEDIA_ROOT, return the URL."""
     permission_classes = [IsAuthenticatedAPI]
 
     def post(self, request):
@@ -612,15 +614,23 @@ class MediaUploadView(_APIView):
             return _Response({"error": "File too large. Max 500 MB."}, status=_status.HTTP_400_BAD_REQUEST)
 
         ext = os.path.splitext(file.name)[1].lower()
-        if ext not in ALLOWED_VIDEO_EXTENSIONS:
+        all_allowed = ALLOWED_VIDEO_EXTENSIONS | ALLOWED_DOC_EXTENSIONS | ALLOWED_IMAGE_EXTENSIONS
+        if ext not in all_allowed:
             return _Response(
-                {"error": f"Unsupported file type. Allowed: {', '.join(sorted(ALLOWED_VIDEO_EXTENSIONS))}"},
+                {"error": f"Unsupported file type ({ext}). Allowed: {', '.join(sorted(all_allowed))}"},
                 status=_status.HTTP_400_BAD_REQUEST,
             )
 
+        if ext in ALLOWED_VIDEO_EXTENSIONS:
+            subfolder = "videos"
+        elif ext in ALLOWED_DOC_EXTENSIONS:
+            subfolder = "documents"
+        else:
+            subfolder = "images"
+
         safe_name = get_valid_filename(file.name)
         unique_name = f"{int(now().timestamp())}_{safe_name}"
-        dest_dir = _settings.MEDIA_ROOT / "uploads"
+        dest_dir = _settings.MEDIA_ROOT / "uploads" / subfolder
         os.makedirs(dest_dir, exist_ok=True)
         dest_path = dest_dir / unique_name
 
@@ -628,5 +638,5 @@ class MediaUploadView(_APIView):
             for chunk in file.chunks():
                 dest.write(chunk)
 
-        url = f"{_settings.MEDIA_URL}uploads/{unique_name}"
+        url = f"{_settings.MEDIA_URL}uploads/{subfolder}/{unique_name}"
         return _Response({"ok": True, "url": url, "name": safe_name})
