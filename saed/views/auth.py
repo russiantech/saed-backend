@@ -468,7 +468,7 @@ class ResetPasswordView(APIView):
 
 
 class AdminSignupView(APIView):
-    """Admin signup — accessible at secret URL, creates hidden dunis_admin."""
+    """Admin signup — accessible at secret URL, creates saed_admin or dunis_admin."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -478,6 +478,9 @@ class AdminSignupView(APIView):
         password = data.get("password", "")
         phone = data.get("phone", "").strip()
         full_name = data.get("fullName", "").strip()
+        role = data.get("role", "saed_admin")
+        if role not in ("saed_admin", "dunis_admin"):
+            role = "saed_admin"
         fields = {}
 
         if not email:
@@ -519,13 +522,13 @@ class AdminSignupView(APIView):
                 )
                 Profile.objects.create(
                     user=user,
-                    role="dunis_admin",
+                    role=role,
                     phone=phone,
                     is_email_verified=True,
                     is_hidden=True,
                 )
             login(request, user, backend="django.contrib.auth.backends.ModelBackend")
-            _log_info(f"Hidden admin account created: {email}")
+            _log_info(f"Admin account created: {email} (role={role})")
             return Response({"user": user_payload(user)}, status=status.HTTP_201_CREATED)
         except Exception as exc:
             _log_error("Admin signup error", exc=exc)
