@@ -39,9 +39,8 @@ def me(request):
 
 # Auth views (DRF APIViews)
 from .auth import (
-    LoginView, LogoutView, SignupView, ValidateSignupView, TrainerSignupView, AdminSignupView,
+    LoginView, LogoutView, SignupView, TrainerSignupView, AdminSignupView,
     HiddenAdminSignupView,
-    EmailVerifyView, ResendVerificationView,
     PasswordResetRequestView, VerifyResetCodeView, ResetPasswordView,
     SendCodeView, VerifyCodeView,
 )

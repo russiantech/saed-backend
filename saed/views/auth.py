@@ -108,29 +108,6 @@ class LogoutView(APIView):
         return Response({"ok": True})
 
 
-class ValidateSignupView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        data = request.data
-        fields = {}
-
-        email = clean_email(data.get("email", ""))
-        phone = data.get("phone", "").strip()
-        username = data.get("username", "").strip()
-
-        if email and User.objects.filter(email__iexact=email).exists():
-            fields["email"] = "An account with this email already exists."
-        if phone and Profile.objects.filter(phone=phone).exists():
-            fields["phone"] = "An account with this phone number already exists."
-        if username and User.objects.filter(username__iexact=username).exists():
-            fields["username"] = "This username is already taken."
-
-        if fields:
-            return Response({"ok": False, "fields": fields}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"ok": True})
-
-
 class SignupView(APIView):
     permission_classes = [AllowAny]
 
@@ -372,82 +349,6 @@ class TrainerSignupView(APIView):
         )
 
         return Response({"user": user_payload(user, request)}, status=status.HTTP_201_CREATED)
-
-
-class EmailVerifyView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        data = request.data
-        token = data.get("token", "")
-        if not token:
-            return Response({"error": "Verification token is required.",
-                             "fields": {"token": "Token is required."}},
-                            status=status.HTTP_400_BAD_REQUEST)
-        try:
-            profile = Profile.objects.filter(email_verification_token=token).select_related("user").first()
-            if not profile:
-                return Response({"error": "Invalid or expired verification token."},
-                                status=status.HTTP_400_BAD_REQUEST)
-            if profile.is_email_verified:
-                return Response({"ok": True, "message": "Email is already verified."})
-            profile.is_email_verified = True
-            profile.is_verified = True
-            profile.save(update_fields=["is_email_verified", "is_verified"])
-            return Response({"ok": True, "message": "Email verified successfully."})
-        except Exception as exc:
-            _log_error("Email verification error", exc=exc)
-            return Response({"error": "Verification failed. Please try again."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class ResendVerificationView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        data = request.data
-        email = clean_email(data.get("email", ""))
-        if not email:
-            return Response({"error": "Enter a valid email address.",
-                             "fields": {"email": "Use a valid email address."}},
-                            status=status.HTTP_400_BAD_REQUEST)
-        try:
-            user = User.objects.filter(email__iexact=email, is_active=True).first()
-            if not user:
-                return Response({"ok": True, "message": "If that email exists, a verification link was sent."})
-            profile = Profile.objects.filter(user=user).first()
-            if not profile:
-                return Response({"ok": True, "message": "If that email exists, a verification link was sent."})
-            if profile.is_email_verified:
-                return Response({"ok": True, "message": "Email is already verified."})
-            verification_token = get_random_string(64)
-            profile.email_verification_token = verification_token
-            profile.save(update_fields=["email_verification_token"])
-            frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002")
-            verify_url = f"{frontend_url}/verify-email?token={verification_token}"
-            _send_email_async(
-                subject="Verify your SAED IMS email address",
-                message=f"Hello {user.get_full_name() or user.username},\n\nVerify your email: {verify_url}\n\nBest regards,\nNYSC SAED IMS",
-                recipient_list=[user.email],
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                    f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
-                    f'<p>Hello <strong>{user.get_full_name() or user.username}</strong>,</p>'
-                    f'<p>Please verify your email address by clicking the button below:</p>'
-                    f'<p style="text-align:center;margin:30px 0;">'
-                    f'<a href="{verify_url}" style="background:#1a5f2a;color:#fff;padding:14px 32px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">Verify Email</a></p>'
-                    f'<p style="color:#666;font-size:13px;">If you did not create this account, please ignore this email.</p></div>'
-                    f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
-                ),
-            )
-            return Response({"ok": True, "message": "A new verification email has been sent."})
-        except Exception as exc:
-            _log_error("Resend verification error", exc=exc)
-            return Response({"error": "Failed to resend. Please try again."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class PasswordResetRequestView(APIView):

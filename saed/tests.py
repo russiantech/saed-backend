@@ -169,16 +169,17 @@ class SaedApiTests(TestCase):
             ),
             role="corps_member",
             phone="0801",
-            email_verification_token="verification-token",
+            email_verification_code="123456",
         )
 
         client = Client()
-        first = post_json(client, "/api/auth/verify-email/", {"token": "verification-token"})
-        second = post_json(client, "/api/auth/verify-email/", {"token": "verification-token"})
-
+        first = post_json(client, "/api/auth/verify-code/", {"email": "verify@example.com", "code": "123456"})
         self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 200)
         profile.refresh_from_db()
+        self.assertTrue(profile.is_email_verified)
+
+        second = post_json(client, "/api/auth/verify-code/", {"email": "verify@example.com", "code": "123456"})
+        self.assertEqual(second.status_code, 200)
         self.assertTrue(profile.is_email_verified)
 
     @override_settings(PAYSTACK_SECRET_KEY="test_secret")
