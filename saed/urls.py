@@ -40,6 +40,8 @@ import os
 from urllib.parse import urlsplit
 
 def debug_csrf(request):
+    if not getattr(settings, "DEBUG", False):
+        return JsonResponse({"error": "Not found."}, status=404)
     trusted = settings.CSRF_TRUSTED_ORIGINS
     parsed_hosts = [urlsplit(origin).netloc for origin in trusted]
     return JsonResponse({
@@ -162,5 +164,8 @@ urlpatterns = [
 
     # Complaints
     path("submit-complaint/", views.SubmitComplaintView.as_view()),
+
+    # Realtime
+    path("realtime/sync/", views.RealtimeSyncView.as_view(), name="realtime_sync"),
 ]
 

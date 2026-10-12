@@ -11,9 +11,10 @@ from rest_framework.response import Response
 from rest_framework import status
 from ..models import Course, Profile
 from .base import (
-    _log_error, _log_info, _log_warning, _send_email_async,
-    read_json, user_payload, HasRole,
+    _log_error, _log_info, _log_warning, _send_email_async, _media_url,
+    format_notification_email_html, read_json, user_payload, HasRole,
 )
+from .payments import _paystack_request
 
 
 class DunisPendingPaymentsView(APIView):
@@ -35,6 +36,8 @@ class DunisPendingPaymentsView(APIView):
                     "companyName": p.company_name,
                     "hasPaid": p.has_paid,
                     "paymentVerified": p.payment_verified,
+                    "paymentReference": p.payment_reference,
+                    "profilePicture": _media_url(request, p.profile_picture),
                     "authorizedAt": p.authorized_at.isoformat() if p.authorized_at else None,
                 })
             return Response({"trainers": result})
@@ -50,7 +53,7 @@ class DunisConfirmPaymentView(APIView):
     def post(self, request):
         data = request.data
         user_id = data.get("userId")
-        reference = data.get("reference", "")
+        reference = (data.get("reference") or "").strip()
 
         if not user_id:
             return Response({"error": "User ID is required."},
@@ -65,38 +68,44 @@ class DunisConfirmPaymentView(APIView):
         if profile.role != "trainer":
             return Response({"error": "This user is not a trainer."},
                             status=status.HTTP_400_BAD_REQUEST)
-        if not reference or reference != profile.payment_reference:
-            return Response({"error": "Payment reference does not match this trainer's payment."},
-                            status=status.HTTP_400_BAD_REQUEST)
 
-        secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
-        if not secret_key:
-            return Response({"error": "Payment is not configured."},
-                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        try:
-            api_url = getattr(django_settings, "PAYSTACK_API_URL", "https://api.paystack.co")
-            gateway_request = urllib.request.Request(
-                f"{api_url}/transaction/verify/{reference}",
-                headers={"Authorization": f"Bearer {secret_key}"},
-            )
-            with urllib.request.urlopen(gateway_request, timeout=30) as gateway_response:
-                verification = json.loads(gateway_response.read().decode())
-            payment = verification.get("data", {})
-            expected_kobo = int(getattr(django_settings, "PAYSTACK_DEFAULT_AMOUNT", 50000))
-            valid_payment = (
-                verification.get("status") and payment.get("status") == "success"
-                and payment.get("reference") == reference
-                and payment.get("amount") == expected_kobo
-                and payment.get("currency") == "NGN"
-                and payment.get("customer", {}).get("email", "").lower() == user.email.lower()
-            )
-            if not valid_payment:
-                return Response({"error": "Paystack verification did not match this trainer payment."},
+        # Support manual admin confirmation when reference starts with MANUAL or is manual override
+        is_manual = not reference or reference.startswith("MANUAL-") or reference.upper() == "MANUAL"
+
+        if is_manual:
+            if not reference or reference.upper() == "MANUAL":
+                reference = f"MANUAL-{get_random_string(10).upper()}"
+        else:
+            if profile.payment_reference and reference != profile.payment_reference:
+                return Response({"error": "Payment reference does not match this trainer's payment."},
                                 status=status.HTTP_400_BAD_REQUEST)
-        except Exception as exc:
-            _log_error(f"Trainer payment verification error for {user_id}", exc=exc)
-            return Response({"error": "Unable to verify payment with Paystack."},
-                            status=status.HTTP_502_BAD_GATEWAY)
+
+            secret_key = getattr(django_settings, "PAYSTACK_SECRET_KEY", "")
+            if not secret_key:
+                return Response({"error": "Payment is not configured."},
+                                status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            try:
+                verification = _paystack_request(
+                    "GET",
+                    f"/transaction/verify/{reference}",
+                    headers={"Authorization": f"Bearer {secret_key}", "User-Agent": "SAED-IMS/1.0"},
+                )
+                payment = verification.get("data", {})
+                expected_kobo = int(getattr(django_settings, "PAYSTACK_DEFAULT_AMOUNT", 50000))
+                valid_payment = (
+                    verification.get("status") and payment.get("status") == "success"
+                    and payment.get("reference") == reference
+                    and payment.get("amount") == expected_kobo
+                    and payment.get("currency") == "NGN"
+                    and payment.get("customer", {}).get("email", "").lower() == user.email.lower()
+                )
+                if not valid_payment:
+                    return Response({"error": "Paystack verification did not match this trainer payment."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+            except Exception as exc:
+                _log_error(f"Trainer payment verification error for {user_id}", exc=exc)
+                return Response({"error": "Unable to verify payment with Paystack."},
+                                status=status.HTTP_502_BAD_GATEWAY)
 
         try:
             profile.has_paid = True
@@ -107,19 +116,27 @@ class DunisConfirmPaymentView(APIView):
                 "has_paid", "payment_verified", "payment_reference", "payment_verified_at"
             ])
 
-            frontend_url = getattr(__import__("django.conf", fromlist=["settings"]).settings, "FRONTEND_URL", "http://localhost:3002")
+            user.is_active = True
+            user.save(update_fields=["is_active"])
+
+            frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002")
             _send_email_async(
                 subject="SAED IMS - Account Activated!",
-                message=f"Hello {user.get_full_name()},\n\nYour payment has been verified and your account has been activated.",
+                message=f"Hello {user.get_full_name()},\n\nYour payment has been verified and your account has been activated.\n\nPayment Reference: {reference}\n\nNYSC SAED IMS",
                 recipient_list=[user.email],
                 from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#1a5f2a;margin-top:0;">Account Activated!</h2>'
-                    f'<p>Your payment has been verified and your account has been <strong>activated</strong>.</p>'
-                    f'<p>Payment Reference: {reference}</p></div></div>'
+                html_message=format_notification_email_html(
+                    title="Account Activated!",
+                    recipient_name=user.get_full_name(),
+                    content_html=(
+                        f'<p style="margin:0 0 16px 0;">Your payment has been verified and your account has been <strong>activated</strong>.</p>'
+                        f'<div style="background-color:#eef6f1;border:1px solid #c2dfce;border-radius:8px;padding:14px 16px;margin:16px 0;">'
+                        f'<div style="font-size:12px;font-weight:700;color:#59665d;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Payment Reference</div>'
+                        f'<div style="font-family:monospace;font-size:16px;font-weight:700;color:#0f6b45;">{reference}</div>'
+                        f'</div>'
+                    ),
+                    action_url=f"{frontend_url}/dashboard",
+                    action_text="Go to Dashboard",
                 ),
             )
             return Response({"ok": True, "message": "Payment confirmed. Account activated."})
@@ -143,12 +160,14 @@ class DunisAllTrainersView(APIView):
                     "id": p.user.id,
                     "fullName": p.user.get_full_name() or p.user.email,
                     "email": p.user.email,
+                    "phone": p.phone,
                     "specialization": p.specialization,
                     "isAuthorized": p.is_authorized,
                     "isActive": p.user.is_active,
                     "hasPaid": p.has_paid,
                     "paymentVerified": p.payment_verified,
                     "paymentReference": p.payment_reference,
+                    "profilePicture": _media_url(request, p.profile_picture),
                     "canUploadFastTrack": p.can_upload_fast_track,
                     "authorizationStatus": p.authorization_status,
                 })

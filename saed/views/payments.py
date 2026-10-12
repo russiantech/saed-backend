@@ -17,14 +17,7 @@ from django.utils.crypto import get_random_string
 from django.utils.timezone import now
 
 
-_paystack_ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
-_paystack_ssl_ctx.check_hostname = False
-_paystack_ssl_ctx.verify_mode = ssl.CERT_NONE
-_paystack_ssl_ctx.set_ciphers("DEFAULT:@SECLEVEL=1")
-try:
-    _paystack_ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-except AttributeError:
-    pass
+_paystack_ssl_ctx = ssl.create_default_context()
 
 
 def _paystack_request(method, path, data=None, headers=None, timeout=30):
@@ -61,7 +54,7 @@ from rest_framework import status
 from ..models import Connection, Course, CourseEnrollment, Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async, _notify_admins,
-    _notify_admins_email,
+    _notify_admins_email, format_notification_email_html,
     read_json, validation_error, HasRole, IsAuthenticatedAPI,
 )
 
@@ -168,28 +161,41 @@ class PaystackTrainerVerifyView(APIView):
             if not valid_payment:
                 return Response({"error": "Payment verification failed."},
                                 status=status.HTTP_400_BAD_REQUEST)
+            customer_email = payment.get("customer", {}).get("email", "").lower()
+            if customer_email != request.user.email.lower():
+                return Response({"error": "Payment does not match this user's account."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if profile.payment_reference and reference != profile.payment_reference:
+                return Response({"error": "Payment reference does not match this initialization."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if Profile.objects.filter(payment_verified=True, payment_reference=reference).exclude(id=profile.id).exists():
+                return Response({"error": "This payment reference has already been used."},
+                                status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             _log_error("Trainer verify gateway error", exc=exc)
             return Response({"error": "Unable to verify payment with gateway."},
                             status=status.HTTP_502_BAD_GATEWAY)
 
         profile.has_paid = True
-        profile.is_authorized = True
-        profile.authorization_status = "approved"
-        profile.authorized_at = now()
         profile.payment_verified = True
         profile.payment_verified_at = now()
-        profile.save(update_fields=["has_paid", "is_authorized", "authorization_status", "authorized_at", "payment_verified", "payment_verified_at"])
+        profile.payment_reference = reference
+        # Activate user account once paid
+        profile.user.is_active = True
+        profile.user.save(update_fields=["is_active"])
+        profile.save(update_fields=["has_paid", "payment_verified", "payment_verified_at", "payment_reference"])
         _send_email_async(
             subject="SAED IMS - Trainer Activation Confirmed",
-            message=f"Hello {profile.user.get_full_name()},\n\nYour trainer account has been activated.",
+            message=f"Hello {profile.user.get_full_name()},\n\nYour trainer account has been activated. You can now create courses and connect with corps members.\n\nNYSC SAED IMS",
             recipient_list=[profile.user.email],
-            html_message=(
-                '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                '<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                '<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                '<h2 style="color:#1a5f2a;margin-top:0;">Trainer Account Activated</h2>'
-                '<p>Your trainer account has been activated. You can now create courses and connect with corps members.</p></div></div>'
+            html_message=format_notification_email_html(
+                title="Trainer Account Activated",
+                recipient_name=profile.user.get_full_name(),
+                content_html=(
+                    '<p style="margin:0 0 12px 0;">Congratulations! Your trainer account has been activated.</p>'
+                    '<p style="margin:0;">You can now create courses, accept connection requests, and engage with corps members.</p>'
+                ),
+                action_text="Go to Dashboard",
             ),
         )
         return Response({"ok": True, "message": "Trainer account activated."})
@@ -219,6 +225,11 @@ class FastTrackInitializeView(APIView):
         reference = f"SAED-FT-{get_random_string(12).upper()}"
         email = request.user.email
         frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002").rstrip("/")
+        try:
+            profile.payment_reference = reference
+            profile.save(update_fields=["payment_reference"])
+        except Exception as exc:
+            _log_error("Fast track reference save failed", exc=exc)
 
         last_exc = None
         for attempt in range(3):
@@ -228,7 +239,7 @@ class FastTrackInitializeView(APIView):
                     "amount": FAST_TRACK_AMOUNT,
                     "reference": reference,
                     "currency": "NGN",
-                    "metadata": {"reference": reference, "type": "fast_track"},
+                    "metadata": {"reference": reference, "type": "fast_track", "trainer_id": request.user.id},
                     "callback_url": f"{frontend_url}/app/payment/callback?reference={reference}&type=fast_track",
                 }, headers={"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"})
                 if body.get("status"):
@@ -282,23 +293,35 @@ class FastTrackVerifyView(APIView):
             if not valid_payment:
                 return Response({"error": "Payment verification failed."},
                                 status=status.HTTP_400_BAD_REQUEST)
+
+            customer_email = payment.get("customer", {}).get("email", "").lower()
+            if customer_email != request.user.email.lower():
+                return Response({"error": "Payment does not match this user's account."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            if Profile.objects.filter(can_upload_fast_track=True, payment_reference=reference).exclude(id=profile.id).exists():
+                return Response({"error": "This payment reference has already been used."},
+                                status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             _log_error("Fast track verify gateway error", exc=exc)
             return Response({"error": "Unable to verify payment with gateway."},
                             status=status.HTTP_502_BAD_GATEWAY)
 
         profile.can_upload_fast_track = True
-        profile.save(update_fields=["can_upload_fast_track"])
+        profile.payment_reference = reference
+        profile.save(update_fields=["can_upload_fast_track", "payment_reference"])
         _send_email_async(
             subject="SAED IMS - Fast Track Enabled",
-            message=f"Hello {profile.user.get_full_name()},\n\nFast track has been enabled for your courses.",
+            message=f"Hello {profile.user.get_full_name()},\n\nFast track has been enabled for your courses. You can now upload fast track videos for your courses.\n\nNYSC SAED IMS",
             recipient_list=[profile.user.email],
-            html_message=(
-                '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                '<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                '<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                '<h2 style="color:#1a5f2a;margin-top:0;">Fast Track Enabled</h2>'
-                '<p>Fast track has been enabled. You can now upload fast track videos for your courses.</p></div></div>'
+            html_message=format_notification_email_html(
+                title="Fast Track Enabled",
+                recipient_name=profile.user.get_full_name(),
+                content_html=(
+                    '<p style="margin:0 0 12px 0;">Fast track access has been enabled for your trainer account.</p>'
+                    '<p style="margin:0;">You can now upload fast track videos and training modules directly for your courses.</p>'
+                ),
+                action_text="Manage Courses",
             ),
         )
         return Response({"ok": True, "message": "Fast track enabled."})
@@ -530,15 +553,17 @@ class AdminProcessRefundView(APIView):
             ])
             _send_email_async(
                 subject="SAED IMS - Refund Processed",
-                message=f"Hello {enrollment.student.get_full_name()},\n\nYour refund of \u20a6{enrollment.amount_paid} has been processed.",
+                message=f"Hello {enrollment.student.get_full_name()},\n\nYour refund of \u20a6{enrollment.amount_paid} for {enrollment.course.title} has been processed.\n\nNYSC SAED IMS",
                 recipient_list=[enrollment.student.email],
                 from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#1a5f2a;margin-top:0;">Refund Processed</h2>'
-                    f'<p>Your refund of <strong>\u20a6{enrollment.amount_paid}</strong> for <strong>{enrollment.course.title}</strong> has been processed.</p></div></div>'
+                html_message=format_notification_email_html(
+                    title="Refund Processed",
+                    recipient_name=enrollment.student.get_full_name(),
+                    content_html=(
+                        f'<p style="margin:0 0 12px 0;">Your refund request has been processed successfully.</p>'
+                        f'<p style="margin:0 0 12px 0;"><strong>Course:</strong> {enrollment.course.title}<br>'
+                        f'<strong>Amount Refunded:</strong> &#8358;{enrollment.amount_paid}</p>'
+                    ),
                 ),
             )
             message = "Refund processed."
@@ -571,16 +596,18 @@ class AdminRejectRefundView(APIView):
                 "refund_processed", "refund_processed_at", "refund_note"
             ])
             _send_email_async(
-                subject="SAED IMS - Refund Denied",
-                message=f"Hello {enrollment.student.get_full_name()},\n\nYour refund request has been denied.",
+                subject="SAED IMS - Refund Request Update",
+                message=f"Hello {enrollment.student.get_full_name()},\n\nYour refund request for \u20a6{enrollment.amount_paid} ({enrollment.course.title}) has been reviewed and declined.\n\nNYSC SAED IMS",
                 recipient_list=[enrollment.student.email],
                 from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#c0392b;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#c0392b;margin-top:0;">Refund Denied</h2>'
-                    f'<p>Your refund request for <strong>\u20a6{enrollment.amount_paid}</strong> ({enrollment.course.title}) has been denied.</p></div></div>'
+                html_message=format_notification_email_html(
+                    title="Refund Request Update",
+                    recipient_name=enrollment.student.get_full_name(),
+                    content_html=(
+                        f'<p style="margin:0 0 12px 0;">Your refund request for <strong>&#8358;{enrollment.amount_paid}</strong> ({enrollment.course.title}) has been reviewed and declined by administration.</p>'
+                        + (f'<p style="margin:0 0 12px 0;color:#59665d;">Reason / Note: {note}</p>' if note else '')
+                    ),
+                    note="If you believe this is in error, you may contact the SAED administration directly.",
                 ),
             )
             return Response({"ok": True, "message": "Refund denied."})
@@ -621,28 +648,76 @@ def _handle_trainer_activation(reference):
         if profile.has_paid:
             return True
         profile.has_paid = True
-        profile.is_authorized = True
-        profile.authorization_status = "approved"
-        profile.authorized_at = now()
         profile.payment_verified = True
         profile.payment_verified_at = now()
-        profile.save(update_fields=["has_paid", "is_authorized", "authorization_status", "authorized_at", "payment_verified", "payment_verified_at"])
+        profile.user.is_active = True
+        profile.user.save(update_fields=["is_active"])
+        profile.save(update_fields=["has_paid", "payment_verified", "payment_verified_at"])
         _send_email_async(
             subject="SAED IMS - Trainer Activation Confirmed",
-            message=f"Hello {profile.user.get_full_name()},\n\nYour trainer account has been activated.",
+            message=f"Hello {profile.user.get_full_name()},\n\nYour trainer account has been activated. You can now create courses and connect with corps members.\n\nNYSC SAED IMS",
             recipient_list=[profile.user.email],
-            html_message=(
-                '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                '<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                '<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                '<h2 style="color:#1a5f2a;margin-top:0;">Trainer Account Activated</h2>'
-                '<p>Your trainer account has been activated. You can now create courses and connect with corps members.</p></div></div>'
+            html_message=format_notification_email_html(
+                title="Trainer Account Activated",
+                recipient_name=profile.user.get_full_name(),
+                content_html=(
+                    '<p style="margin:0 0 12px 0;">Your payment was received and your trainer account is now activated!</p>'
+                    '<p style="margin:0;">You can now log in, set up courses, and connect with corps members.</p>'
+                ),
+                action_text="Go to Dashboard",
             ),
         )
         _log_info(f"Webhook: trainer activation completed for {profile.user.email}")
         return True
     except Exception as exc:
         _log_error(f"Webhook: trainer activation error for {reference}", exc=exc)
+        return False
+
+
+def _handle_fast_track_payment(reference, data=None):
+    """Handle successful fast track payment via webhook."""
+    try:
+        customer_email = (data or {}).get("customer", {}).get("email", "").lower()
+        metadata = (data or {}).get("metadata", {})
+        trainer_id = metadata.get("trainer_id")
+
+        profile = None
+        if trainer_id:
+            profile = Profile.objects.filter(user_id=trainer_id, role="trainer").first()
+        if not profile and customer_email:
+            profile = Profile.objects.filter(user__email__iexact=customer_email, role="trainer").first()
+        if not profile:
+            profile = Profile.objects.filter(payment_reference=reference, role="trainer").first()
+
+        if not profile:
+            _log_warning(f"Webhook: no trainer profile found for fast track reference {reference}")
+            return False
+
+        if profile.can_upload_fast_track:
+            return True
+
+        profile.can_upload_fast_track = True
+        profile.payment_reference = reference
+        profile.save(update_fields=["can_upload_fast_track", "payment_reference"])
+
+        _send_email_async(
+            subject="SAED IMS - Fast Track Enabled",
+            message=f"Hello {profile.user.get_full_name()},\n\nFast track has been enabled for your courses. You can now upload fast track videos for your courses.\n\nNYSC SAED IMS",
+            recipient_list=[profile.user.email],
+            html_message=format_notification_email_html(
+                title="Fast Track Enabled",
+                recipient_name=profile.user.get_full_name(),
+                content_html=(
+                    '<p style="margin:0 0 12px 0;">Fast track access has been enabled for your trainer account.</p>'
+                    '<p style="margin:0;">You can now upload fast track videos and training modules directly for your courses.</p>'
+                ),
+                action_text="Manage Courses",
+            ),
+        )
+        _log_info(f"Webhook: fast track enabled for trainer {profile.user_id} via reference {reference}")
+        return True
+    except Exception as exc:
+        _log_error(f"Webhook: fast track payment error for {reference}", exc=exc)
         return False
 
 
@@ -663,14 +738,16 @@ def _handle_course_payment(reference):
         enrollment.save(update_fields=["payment_verified", "status", "amount_paid"])
         _send_email_async(
             subject="SAED IMS - Course Payment Received",
-            message=f"Hello {enrollment.student.get_full_name()},\n\nYour payment for \"{enrollment.course.title}\" has been received.",
+            message=f"Hello {enrollment.student.get_full_name()},\n\nYour payment for \"{enrollment.course.title}\" has been received. You are now enrolled.\n\nNYSC SAED IMS",
             recipient_list=[enrollment.student.email],
-            html_message=(
-                '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                '<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                '<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                '<h2 style="color:#1a5f2a;margin-top:0;">Payment Received</h2>'
-                f'<p>Your payment for <strong>{enrollment.course.title}</strong> has been received. You are now enrolled.</p></div></div>'
+            html_message=format_notification_email_html(
+                title="Enrollment Confirmed",
+                recipient_name=enrollment.student.get_full_name(),
+                content_html=(
+                    f'<p style="margin:0 0 12px 0;">Your payment for <strong>{enrollment.course.title}</strong> has been confirmed.</p>'
+                    f'<p style="margin:0;">You are now enrolled in the course and have full access to study materials and training sessions.</p>'
+                ),
+                action_text="View My Courses",
             ),
         )
         _log_info(f"Webhook: course payment verified for {enrollment.student.email} ({enrollment.course.title})")
@@ -712,7 +789,9 @@ def paystack_webhook(request):
         metadata = data.get("metadata", {})
         payment_type = metadata.get("type", "")
 
-        if payment_type == "trainer_activation" or reference.startswith("SAED-") and not reference.startswith("SAED-COURSE-"):
+        if payment_type == "fast_track" or reference.startswith("SAED-FT-"):
+            _handle_fast_track_payment(reference, data)
+        elif payment_type == "trainer_activation" or (reference.startswith("SAED-") and not reference.startswith("SAED-COURSE-") and not reference.startswith("SAED-FT-")):
             _handle_trainer_activation(reference)
         elif payment_type == "course_payment" or reference.startswith("SAED-COURSE-"):
             _handle_course_payment(reference)

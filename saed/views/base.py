@@ -57,6 +57,8 @@ def _send_email_async(
     
     def _send():
         try:
+            if getattr(django_settings, "EMAIL_USE_SSL", False) and getattr(django_settings, "EMAIL_USE_TLS", False):
+                django_settings.EMAIL_USE_TLS = False
             send_mail(
                 subject=subject,
                 message=message,
@@ -75,6 +77,132 @@ def _send_email_async(
     thread = threading.Thread(target=_send, daemon=True)
     thread.start()
     return thread
+
+
+def format_code_email_html(title, recipient_name, code, expiry_minutes=10, description=None):
+    if not description:
+        description = "Please use the 6-digit code below to complete your verification:"
+    
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f6f8f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18231d;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f6f8f4;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:540px;background-color:#ffffff;border-radius:16px;border:1px solid #dfe8e2;box-shadow:0 4px 20px rgba(15,107,69,0.06);overflow:hidden;">
+          <tr>
+            <td style="background-color:#0f6b45;background-image:linear-gradient(135deg, #0e5234 0%, #145f3f 50%, #0f6b45 100%);padding:28px 32px;text-align:center;">
+              <h1 style="margin:0;font-size:23px;font-weight:800;color:#ffffff;letter-spacing:0.5px;">NYSC SAED IMS</h1>
+              <p style="margin:6px 0 0 0;font-size:13px;color:#cce7d8;font-weight:500;">Skills Acquisition &amp; Entrepreneurship Development</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 32px 28px 32px;">
+              <h2 style="margin:0 0 16px 0;font-size:20px;font-weight:700;color:#182e21;">{title}</h2>
+              <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#243028;">
+                Hello <strong>{recipient_name}</strong>,
+              </p>
+              <p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#59665d;">
+                {description}
+              </p>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:20px 0;">
+                <tr>
+                  <td align="center" style="background-color:#eef6f1;border:1px solid #c2dfce;border-radius:12px;padding:22px 16px;">
+                    <div style="font-size:12px;font-weight:700;color:#59665d;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;">Verification Code</div>
+                    <div style="font-family:'Courier New',Courier,monospace,Inter,sans-serif;font-size:36px;font-weight:800;letter-spacing:10px;color:#0f6b45;padding-left:10px;">{code}</div>
+                  </td>
+                </tr>
+              </table>
+
+              <div style="background-color:#f6f9f6;border-left:4px solid #0f6b45;border-radius:4px;padding:12px 16px;margin:24px 0 0 0;">
+                <p style="margin:0;font-size:13px;line-height:1.5;color:#59665d;">
+                  ⏱ This code expires in <strong>{expiry_minutes} minutes</strong>.<br>
+                  🔒 If you did not make this request, you can safely ignore this email.
+                </p>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f6f8f4;border-top:1px solid #dfe8e2;padding:20px 32px;text-align:center;">
+              <p style="margin:0 0 4px 0;font-size:12px;color:#59665d;">National Youth Service Corps (NYSC) &bull; Lagos State</p>
+              <p style="margin:0;font-size:11px;color:#8ca08f;">&copy; 2026 NYSC SAED IMS. All rights reserved.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+
+def format_notification_email_html(title, recipient_name, content_html, action_url=None, action_text=None, note=None):
+    action_button = ""
+    if action_url and action_text:
+        action_button = f"""
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:24px 0;">
+          <tr>
+            <td align="center" style="border-radius:8px;background-color:#0f6b45;">
+              <a href="{action_url}" target="_blank" style="font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;padding:12px 28px;display:inline-block;border-radius:8px;">{action_text}</a>
+            </td>
+          </tr>
+        </table>
+        """
+    callout = ""
+    if note:
+        callout = f"""
+        <div style="background-color:#f6f9f6;border-left:4px solid #0f6b45;border-radius:4px;padding:12px 16px;margin:24px 0 0 0;">
+          <p style="margin:0;font-size:13px;line-height:1.5;color:#59665d;">{note}</p>
+        </div>
+        """
+    greeting = f'<p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#243028;">Hello <strong>{recipient_name}</strong>,</p>' if recipient_name else ''
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f6f8f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18231d;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f6f8f4;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:540px;background-color:#ffffff;border-radius:16px;border:1px solid #dfe8e2;box-shadow:0 4px 20px rgba(15,107,69,0.06);overflow:hidden;">
+          <tr>
+            <td style="background-color:#0f6b45;background-image:linear-gradient(135deg, #0e5234 0%, #145f3f 50%, #0f6b45 100%);padding:28px 32px;text-align:center;">
+              <h1 style="margin:0;font-size:23px;font-weight:800;color:#ffffff;letter-spacing:0.5px;">NYSC SAED IMS</h1>
+              <p style="margin:6px 0 0 0;font-size:13px;color:#cce7d8;font-weight:500;">Skills Acquisition &amp; Entrepreneurship Development</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 32px 28px 32px;">
+              <h2 style="margin:0 0 16px 0;font-size:20px;font-weight:700;color:#182e21;">{title}</h2>
+              {greeting}
+              <div style="font-size:15px;line-height:1.6;color:#59665d;">
+                {content_html}
+              </div>
+              {action_button}
+              {callout}
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f6f8f4;border-top:1px solid #dfe8e2;padding:20px 32px;text-align:center;">
+              <p style="margin:0 0 4px 0;font-size:12px;color:#59665d;">National Youth Service Corps (NYSC) &bull; Lagos State</p>
+              <p style="margin:0;font-size:11px;color:#8ca08f;">&copy; 2026 NYSC SAED IMS. All rights reserved.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

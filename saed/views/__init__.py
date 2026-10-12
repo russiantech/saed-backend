@@ -117,3 +117,6 @@ from .dunis import (
     DunisAllTrainersView, DunisToggleFastTrackView,
 )
 
+# Realtime
+from .realtime import RealtimeSyncView
+

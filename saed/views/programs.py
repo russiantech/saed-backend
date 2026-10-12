@@ -9,10 +9,10 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 
-from ..models import Course, CourseEnrollment
+from ..models import Course, CourseEnrollment, Connection
 from .base import (
     _log_error, _log_warning, _notify_user,
-    user_payload, course_payload,
+    user_payload, course_payload, application_payload,
     program_categories_payload, trainers_payload,
     role_for, PROGRAM_FIELDS, HasRole,
     _parse_date,
@@ -47,28 +47,7 @@ class ApplicationListView(APIView):
             enrollments = CourseEnrollment.objects.filter(
                 student=request.user
             ).select_related("course", "course__trainer", "course__trainer__profile")
-            result = []
-            for e in enrollments:
-                result.append({
-                    "id": e.id,
-                    "status": e.status,
-                    "motivation": f"Payment reference: {e.payment_reference}" if e.payment_reference else "",
-                    "createdAt": e.enrolled_at.isoformat() if e.enrolled_at else "",
-                    "applicant": user_payload(e.student),
-                    "program": {
-                        "id": e.course.id,
-                        "title": e.course.title,
-                        "category": e.course.category,
-                        "location": e.course.location,
-                        "description": e.course.description,
-                        "durationWeeks": e.course.duration_weeks,
-                        "trainerName": (e.course.trainer.get_full_name() or e.course.trainer.email) if e.course.trainer else None,
-                        "availableSlots": e.course.max_students,
-                    },
-                    "type": "course_enrollment",
-                    "amountPaid": str(e.amount_paid),
-                    "paymentVerified": e.payment_verified,
-                })
+            result = [application_payload(e) for e in enrollments]
             return Response({"applications": result})
         except Exception as exc:
             _log_error("Application list error", exc=exc)
@@ -93,6 +72,30 @@ class ApplicationCreateView(APIView):
         except Course.DoesNotExist:
             return Response({"error": "Program not found."},
                             status=status.HTTP_404_NOT_FOUND)
+
+        if course.is_restricted:
+            return Response({"error": "This course is restricted."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if course.price > 0:
+            return Response({
+                "error": "This is a paid course. Please initiate payment to enroll.",
+                "requiresPayment": True,
+                "courseId": course.id,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not Connection.objects.filter(
+            corps_member=request.user, trainer=course.trainer, status="active"
+        ).exists():
+            return Response({"error": "Connect with this course's trainer before enrolling."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        confirmed_count = CourseEnrollment.objects.filter(
+            course=course, status="confirmed"
+        ).count()
+        if confirmed_count >= course.max_students:
+            return Response({"error": "This course is full.", "slotsFull": True},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         existing = CourseEnrollment.objects.filter(
             student=request.user, course=course
@@ -387,28 +390,7 @@ class ManageApplicationsView(APIView):
                 enrollments = CourseEnrollment.objects.all().select_related(
                     "student", "student__profile", "course", "course__trainer", "course__trainer__profile"
                 )
-            result = []
-            for e in enrollments:
-                result.append({
-                    "id": e.id,
-                    "status": e.status,
-                    "motivation": f"Payment reference: {e.payment_reference}" if e.payment_reference else "",
-                    "createdAt": e.enrolled_at.isoformat() if e.enrolled_at else "",
-                    "applicant": user_payload(e.student),
-                    "program": {
-                        "id": e.course.id,
-                        "title": e.course.title,
-                        "category": e.course.category,
-                        "location": e.course.location,
-                        "description": e.course.description,
-                        "durationWeeks": e.course.duration_weeks,
-                        "trainerName": (e.course.trainer.get_full_name() or e.course.trainer.email) if e.course.trainer else None,
-                        "availableSlots": e.course.max_students,
-                    },
-                    "type": "course_enrollment",
-                    "amountPaid": str(e.amount_paid),
-                    "paymentVerified": e.payment_verified,
-                })
+            result = [application_payload(e) for e in enrollments]
             return Response({"applications": result})
         except Exception as exc:
             _log_error("Manage applications error", exc=exc)

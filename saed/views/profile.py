@@ -43,6 +43,7 @@ class UpdateProfileView(APIView):
                     "lgaOfDeployment": "lga_of_deployment",
                     "phone": "phone",
                     "stateOfOrigin": "state_of_origin",
+                    "nyscStateCode": "nysc_state_code",
                 }
                 for frontend_key, model_key in field_mappings.items():
                     if frontend_key in data:
@@ -56,6 +57,8 @@ class UpdateProfileView(APIView):
                             profile.skill_interests = value
                             if value:
                                 profile.skill_interest = value[0] if value else ""
+                        elif frontend_key == "nyscStateCode":
+                            profile.nysc_state_code = str(value).strip().upper() if value else ""
                         else:
                             setattr(profile, model_key, str(value).strip() if value else "")
 

@@ -22,6 +22,7 @@ from ..models import Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async,
     _notify_admins, _notify_admins_email, _notify_user,
+    format_code_email_html, format_notification_email_html,
     read_json, clean_email, user_payload, _safe_int, validation_error,
     HasRole,
 )
@@ -132,12 +133,13 @@ class SignupView(APIView):
             fields["email"] = "An account with this email already exists."
         if role != "corps_member":
             fields["role"] = "Public signup is only available for corps members."
+        nysc_state_code = data.get("nyscStateCode", "").strip().upper()
         if role == "corps_member":
             if not data.get("phone", "").strip():
                 fields["phone"] = "Phone number is required."
             elif Profile.objects.filter(phone=data.get("phone", "").strip()).exists():
                 fields["phone"] = "An account with this phone number already exists."
-            if not data.get("nyscStateCode", "").strip():
+            if not nysc_state_code:
                 fields["nyscStateCode"] = "NYSC state code is required."
             if not data.get("stateOfDeployment", "").strip():
                 fields["stateOfDeployment"] = "State of deployment is required."
@@ -169,7 +171,7 @@ class SignupView(APIView):
         Profile.objects.create(
             user=user, role=role,
             phone=data.get("phone", "").strip(),
-            nysc_state_code=data.get("nyscStateCode", "").strip(),
+            nysc_state_code=nysc_state_code,
             state_of_deployment=data.get("stateOfDeployment", "").strip(),
             state_of_origin=data.get("stateOfOrigin", "").strip(),
             lga_of_deployment=data.get("lgaOfDeployment", "").strip(),
@@ -189,21 +191,21 @@ class SignupView(APIView):
                 f"A new corps member has registered.\n"
                 f"Name: {full_name}\nEmail: {email}\n"
                 f"Phone: {data.get('phone', '').strip()}\n"
-                f"State Code: {data.get('nyscStateCode', '').strip()}"
+                f"State Code: {nysc_state_code}"
             ),
             email_type="general",
-            html_message=(
-                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                f'<h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                f'<h2 style="color:#1a5f2a;margin-top:0;">New Corps Member Registration</h2>'
-                f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
-                f'<tr><td style="padding:8px;font-weight:bold;">Name</td><td style="padding:8px;">{full_name}</td></tr>'
-                f'<tr><td style="padding:8px;font-weight:bold;">Email</td><td style="padding:8px;">{email}</td></tr>'
-                f'<tr><td style="padding:8px;font-weight:bold;">Phone</td><td style="padding:8px;">{data.get("phone", "").strip()}</td></tr>'
-                f'<tr><td style="padding:8px;font-weight:bold;">State Code</td><td style="padding:8px;">{data.get("nyscStateCode", "").strip()}</td></tr>'
-                f'</table></div></div>'
+            html_message=format_notification_email_html(
+                title="New Corps Member Registration",
+                recipient_name="Administrator",
+                content_html=(
+                    f'<p style="margin:0 0 16px 0;">A new corps member has registered on the platform:</p>'
+                    f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px;border-collapse:collapse;margin:16px 0;">'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:120px;">Name</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{full_name}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Email</td><td style="padding:10px 0;color:#182e21;">{email}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Phone</td><td style="padding:10px 0;color:#182e21;">{data.get("phone", "").strip()}</td></tr>'
+                    f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">State Code</td><td style="padding:10px 0;color:#182e21;">{nysc_state_code}</td></tr>'
+                    f'</table>'
+                ),
             ),
         )
 
@@ -302,27 +304,6 @@ class TrainerSignupView(APIView):
             return Response({"error": "Signup failed. Please try again."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3002')
-        verify_url = f"{frontend_url}/verify-email?token={verification_token}"
-
-        _send_email_async(
-            subject="Verify your SAED IMS email address",
-            message=f"Hello {full_name},\n\nVerify your email: {verify_url}\n\nBest regards,\nNYSC SAED IMS",
-            recipient_list=[email],
-            html_message=(
-                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
-                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
-                f'<p>Hello <strong>{full_name}</strong>,</p>'
-                f'<p>Please verify your email address by clicking the button below:</p>'
-                f'<p style="text-align:center;margin:30px 0;">'
-                f'<a href="{verify_url}" style="background:#1a5f2a;color:#fff;padding:14px 32px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">Verify Email</a></p>'
-                f'<p style="color:#666;font-size:13px;">If you did not create this account, please ignore this email.</p></div>'
-                f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
-            ),
-        )
 
         _notify_admins_email(
             subject=f"New Trainer Registration: {full_name}",
@@ -333,18 +314,18 @@ class TrainerSignupView(APIView):
             ),
             email_type="trainer",
             from_email=email,
-            html_message=(
-                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                f'<h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                f'<h2 style="color:#1a5f2a;margin-top:0;">New Trainer Registration</h2>'
-                f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
-                f'<tr><td style="padding:8px;font-weight:bold;">Name</td><td style="padding:8px;">{full_name}</td></tr>'
-                f'<tr><td style="padding:8px;font-weight:bold;">Email</td><td style="padding:8px;">{email}</td></tr>'
-                f'<tr><td style="padding:8px;font-weight:bold;">Phone</td><td style="padding:8px;">{phone}</td></tr>'
-                f'<tr><td style="padding:8px;font-weight:bold;">Specialization</td><td style="padding:8px;">{specialization}</td></tr>'
-                f'</table></div></div>'
+            html_message=format_notification_email_html(
+                title="New Trainer Registration",
+                recipient_name="Administrator",
+                content_html=(
+                    f'<p style="margin:0 0 16px 0;">A new trainer has registered and is awaiting approval:</p>'
+                    f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px;border-collapse:collapse;margin:16px 0;">'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:120px;">Name</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{full_name}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Email</td><td style="padding:10px 0;color:#182e21;">{email}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Phone</td><td style="padding:10px 0;color:#182e21;">{phone}</td></tr>'
+                    f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Specialization</td><td style="padding:10px 0;color:#182e21;">{specialization}</td></tr>'
+                    f'</table>'
+                ),
             ),
         )
 
@@ -372,22 +353,23 @@ class PasswordResetRequestView(APIView):
                     profile.password_reset_token = token
                     profile.password_reset_code = code
                     profile.save(update_fields=["password_reset_token", "password_reset_code"])
+                html_msg = format_code_email_html(
+                    title="Password Reset Code",
+                    recipient_name=user.get_full_name() or user.username,
+                    code=code,
+                    expiry_minutes=15,
+                    description="We received a request to reset the password for your account. Use the verification code below to set a new password:",
+                )
                 _send_email_async(
-                    subject="SAED - Password Reset Code",
-                    message=f"Your password reset code is: {code}",
-                    recipient_list=[user.email],
-                    html_message=(
-                        f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                        f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                        f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
-                        f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                        f'<h2 style="color:#1a5f2a;margin-top:0;">Password Reset Code</h2>'
-                        f'<p>Hello <strong>{user.get_full_name() or user.username}</strong>,</p>'
-                        f'<p>Your password reset code is:</p>'
-                        f'<p style="text-align:center;margin:30px 0;"><span style="font-size:32px;letter-spacing:8px;font-weight:bold;color:#1a5f2a;">{code}</span></p>'
-                        f'<p style="color:#666;font-size:13px;">This code expires in 15 minutes. If you did not request a reset, ignore this email.</p></div>'
-                        f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
+                    subject="NYSC SAED IMS - Password Reset Code",
+                    message=(
+                        f"Hello {user.get_full_name() or user.username},\n\n"
+                        f"Your password reset code is: {code}\n\n"
+                        f"This code expires in 15 minutes. If you did not make this request, please ignore this email.\n\n"
+                        f"NYSC SAED IMS"
                     ),
+                    recipient_list=[user.email],
+                    html_message=html_msg,
                 )
             return Response({"ok": True, "token": token if user else get_random_string(64),
                              "message": "If that email exists, a reset code was sent."})
@@ -483,6 +465,14 @@ class AdminSignupView(APIView):
             role = "dunis_admin"
         fields = {}
 
+        secret = data.get("secret", "").strip()
+        expected_secret = getattr(django_settings, "ADMIN_SIGNUP_SECRET", "")
+        if not expected_secret or secret != expected_secret:
+            return Response(
+                {"error": "Invalid or missing admin security key.", "fields": {"secret": "A valid admin security key is required."}},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         if not email:
             fields["email"] = "Email is required."
         elif User.objects.filter(email__iexact=email).exists():
@@ -501,7 +491,7 @@ class AdminSignupView(APIView):
             return Response(
                 {"error": "Please correct the highlighted fields.", "fields": fields},
                 status=status.HTTP_400_BAD_REQUEST
-                )
+            )
 
         try:
             validate_password(password)
@@ -635,25 +625,26 @@ class SendCodeView(APIView):
         profile.email_verification_code_at = now()
         profile.save(update_fields=["email_verification_code", "email_verification_code_at"])
 
+        html_msg = format_code_email_html(
+            title="Email Verification",
+            recipient_name=user.get_full_name() or user.username,
+            code=code,
+            expiry_minutes=10,
+            description="Thank you for joining NYSC SAED IMS. Use the verification code below to confirm your email address and activate your account:",
+        )
         _send_email_async(
             subject="SAED IMS - Your Verification Code",
-            message=f"Your verification code is: {code}",
-            recipient_list=[user.email],
-            html_message=(
-                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
-                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
-                f'<p>Hello <strong>{user.get_full_name() or user.username}</strong>,</p>'
-                f'<p>Your verification code is:</p>'
-                f'<p style="text-align:center;margin:30px 0;"><span style="font-size:32px;letter-spacing:8px;font-weight:bold;color:#1a5f2a;">{code}</span></p>'
-                f'<p style="color:#666;font-size:13px;">This code expires in 10 minutes. If you did not create this account, ignore this email.</p></div>'
-                f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
+            message=(
+                f"Hello {user.get_full_name() or user.username},\n\n"
+                f"Your verification code is: {code}\n\n"
+                f"This code expires in 10 minutes. If you did not create this account, please ignore this email.\n\n"
+                f"NYSC SAED IMS"
             ),
+            recipient_list=[user.email],
+            html_message=html_msg,
         )
 
-        _log_info(f"Verification code sent to {email}")
+        _log_info(f"Verification code sent to {email}: {code}")
         return Response({"ok": True, "message": "Code sent to your email."})
 
 

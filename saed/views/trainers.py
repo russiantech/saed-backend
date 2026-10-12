@@ -13,7 +13,7 @@ from rest_framework import status
 from ..models import Connection, Course, CourseEnrollment, Notification, Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async, _notify_user,
-    _notify_admins_email,
+    _notify_admins, _notify_admins_email, format_notification_email_html,
     read_json, user_payload, trainer_payload, trainers_payload,
     course_payload, connection_payload, role_for,
     validation_error, HasRole, IsAuthenticatedAPI, IsAuthorizedTrainer,
@@ -218,7 +218,7 @@ class ConnectTrainerView(APIView):
 
             trainer_courses = Course.objects.filter(trainer=trainer, is_active=True)
             all_full = all(
-                Connection.objects.filter(trainer=trainer, status="active").count() >= c.max_students
+                CourseEnrollment.objects.filter(course=c, status="confirmed").count() >= c.max_students
                 for c in trainer_courses
             ) if trainer_courses.exists() else False
 
@@ -245,13 +245,14 @@ class ConnectTrainerView(APIView):
                 message=f"Hello {trainer.get_full_name()},\n\n{cm_name} ({request.user.email}) wants to connect with you.\nPlease log in to review and approve this request.\n\nBest regards,\nNYSC SAED IMS",
                 recipient_list=[trainer.email],
                 from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#1a5f2a;margin-top:0;">New Connection Request</h2>'
-                    f'<p><strong>{cm_name}</strong> ({request.user.email}) wants to connect with you.</p>'
-                    f'<p>Please log in to review and approve this request.</p></div></div>'
+                html_message=format_notification_email_html(
+                    title="New Connection Request",
+                    recipient_name=trainer.get_full_name(),
+                    content_html=(
+                        f'<p style="margin:0 0 12px 0;"><strong>{cm_name}</strong> ({request.user.email}) has requested to connect with you on NYSC SAED IMS.</p>'
+                        f'<p style="margin:0;">Please log into your dashboard to review and respond to this request.</p>'
+                    ),
+                    action_text="Review Connection",
                 ),
             )
             return Response({"connection": connection_payload(connection)}, status=status.HTTP_201_CREATED)
@@ -313,12 +314,14 @@ class ConnectionApproveView(APIView):
                 message=f"Hello {connection.corps_member.get_full_name()},\n\nYour connection has been approved!",
                 recipient_list=[connection.corps_member.email],
                 from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#1a5f2a;margin-top:0;">Connection Approved!</h2>'
-                    f'<p>Your connection with <strong>{request.user.get_full_name()}</strong> has been approved!</p></div></div>'
+                html_message=format_notification_email_html(
+                    title="Connection Approved!",
+                    recipient_name=connection.corps_member.get_full_name(),
+                    content_html=(
+                        f'<p style="margin:0 0 12px 0;">Great news! Your connection request with <strong>{request.user.get_full_name()}</strong> has been approved.</p>'
+                        f'<p style="margin:0;">You can now communicate directly and access courses under this trainer.</p>'
+                    ),
+                    action_text="View Trainer",
                 ),
             )
             _notify_admins_email(
@@ -330,15 +333,16 @@ class ConnectionApproveView(APIView):
                 ),
                 email_type="trainer",
                 from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#1a5f2a;margin-top:0;">Connection Approved</h2>'
-                    f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Corps Member</td><td style="padding:8px;">{connection.corps_member.get_full_name()}</td></tr>'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Trainer</td><td style="padding:8px;">{request.user.get_full_name()}</td></tr>'
-                    f'</table></div></div>'
+                html_message=format_notification_email_html(
+                    title="Connection Approved",
+                    recipient_name="Administrator",
+                    content_html=(
+                        f'<p style="margin:0 0 16px 0;">A connection has been approved:</p>'
+                        f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px;border-collapse:collapse;margin:16px 0;">'
+                        f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:130px;">Corps Member</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{connection.corps_member.get_full_name()}</td></tr>'
+                        f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Trainer</td><td style="padding:10px 0;color:#182e21;">{request.user.get_full_name()}</td></tr>'
+                        f'</table>'
+                    ),
                 ),
             )
             return Response({"connection": connection_payload(connection)})
@@ -370,13 +374,14 @@ class ConnectionRejectView(APIView):
                 message=f"Hello {connection.corps_member.get_full_name()},\n\nYour connection request with {request.user.get_full_name()} has been declined.",
                 recipient_list=[connection.corps_member.email],
                 from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#e67e22;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#e67e22;margin-top:0;">Connection Declined</h2>'
-                    f'<p>Your connection request with <strong>{request.user.get_full_name()}</strong> has been declined.</p>'
-                    f'<p style="color:#666;font-size:13px;">You can browse other trainers from your dashboard.</p></div></div>'
+                html_message=format_notification_email_html(
+                    title="Connection Declined",
+                    recipient_name=connection.corps_member.get_full_name(),
+                    content_html=(
+                        f'<p style="margin:0 0 12px 0;">Your connection request with <strong>{request.user.get_full_name()}</strong> has been declined.</p>'
+                        f'<p style="margin:0;">You can browse other available trainers on the platform from your dashboard.</p>'
+                    ),
+                    action_text="Browse Trainers",
                 ),
             )
             _notify_admins_email(
@@ -388,15 +393,16 @@ class ConnectionRejectView(APIView):
                 ),
                 email_type="trainer",
                 from_email=request.user.email,
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#e67e22;padding:20px;border-radius:8px 8px 0 0;"><h1 style="color:#fff;margin:0;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#e67e22;margin-top:0;">Connection Declined</h2>'
-                    f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Corps Member</td><td style="padding:8px;">{connection.corps_member.get_full_name()}</td></tr>'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Trainer</td><td style="padding:8px;">{request.user.get_full_name()}</td></tr>'
-                    f'</table></div></div>'
+                html_message=format_notification_email_html(
+                    title="Connection Declined",
+                    recipient_name="Administrator",
+                    content_html=(
+                        f'<p style="margin:0 0 16px 0;">A connection request was declined:</p>'
+                        f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px;border-collapse:collapse;margin:16px 0;">'
+                        f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:130px;">Corps Member</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{connection.corps_member.get_full_name()}</td></tr>'
+                        f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Trainer</td><td style="padding:10px 0;color:#182e21;">{request.user.get_full_name()}</td></tr>'
+                        f'</table>'
+                    ),
                 ),
             )
             return Response({"connection": connection_payload(connection)})
@@ -433,8 +439,8 @@ class CorperProfileForTrainerView(APIView):
 
             courses_with_status = []
             for course in trainer_courses:
-                enrolled_count = Connection.objects.filter(
-                    trainer=request.user, status="active"
+                enrolled_count = CourseEnrollment.objects.filter(
+                    course=course, status="confirmed"
                 ).count()
                 enrollment = enrollment_map.get(course.id)
                 courses_with_status.append({
