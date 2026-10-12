@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from saed.models import Program
+from saed.models import Course, SKILL_AREAS
 
 
 MAPPING = [
@@ -29,7 +29,7 @@ OLD_MAP = {
 
 
 class Command(BaseCommand):
-    help = "Assign categories to programs that have missing or invalid category values."
+    help = "Assign categories to courses that have missing or invalid category values."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -40,22 +40,21 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         apply_changes = options.get('apply')
 
-        allowed = [c[0] for c in Program.CATEGORY_CHOICES]
-        qs = Program.objects.exclude(category__in=allowed)
+        allowed = [c[0] for c in SKILL_AREAS]
+        qs = Course.objects.exclude(category__in=allowed)
 
         if not qs.exists():
-            self.stdout.write(self.style.SUCCESS('No programs with missing or invalid categories found.'))
+            self.stdout.write(self.style.SUCCESS('No courses with missing or invalid categories found.'))
             return
 
         updates = []
-        for p in qs:
-            # try direct mapping from existing category value first
-            old_cat = (p.category or '').strip().lower()
+        for c in qs:
+            old_cat = (c.category or '').strip().lower()
             assigned = None
             if old_cat and old_cat in OLD_MAP:
                 assigned = OLD_MAP[old_cat]
             else:
-                text = (p.title or '') + ' ' + (p.description or '')
+                text = (c.title or '') + ' ' + (c.description or '')
                 text = text.lower()
                 for keywords, cat in MAPPING:
                     for kw in keywords:
@@ -68,19 +67,17 @@ class Command(BaseCommand):
             if not assigned:
                 assigned = 'education'
 
-            updates.append((p, assigned))
+            updates.append((c, assigned))
 
-        # Print suggestions
-        for prog, new_cat in updates:
-            self.stdout.write(f"{prog.id}: '{prog.title}' (was: '{prog.category}') => suggested: '{new_cat}'")
+        for course, new_cat in updates:
+            self.stdout.write(f"{course.id}: '{course.title}' (was: '{course.category}') => suggested: '{new_cat}'")
 
         if not apply_changes:
             self.stdout.write(self.style.WARNING("Dry run complete. Rerun with --apply to save changes."))
             return
 
-        # Apply
-        for prog, new_cat in updates:
-            prog.category = new_cat
-            prog.save()
+        for course, new_cat in updates:
+            course.category = new_cat
+            course.save()
 
-        self.stdout.write(self.style.SUCCESS(f"Updated {len(updates)} program(s).") )
+        self.stdout.write(self.style.SUCCESS(f"Updated {len(updates)} course(s)."))

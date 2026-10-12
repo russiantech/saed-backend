@@ -12,6 +12,7 @@ from .base import (
     program_categories_payload, trainer_payload, trainers_payload,
     managed_programs_for, managed_applications_for, trainer_program_payload,
     course_payload, connection_payload, fast_track_video_payload,
+    module_payload, lesson_payload,
     IsAuthenticatedAPI, HasRole, IsAuthorizedTrainer,
 )
 
@@ -38,10 +39,10 @@ def me(request):
 
 # Auth views (DRF APIViews)
 from .auth import (
-    LoginView, LogoutView, SignupView, ValidateSignupView, TrainerSignupView, AdminSignupView,
+    LoginView, LogoutView, SignupView, TrainerSignupView, AdminSignupView,
     HiddenAdminSignupView,
-    EmailVerifyView, ResendVerificationView,
     PasswordResetRequestView, VerifyResetCodeView, ResetPasswordView,
+    SendCodeView, VerifyCodeView,
 )
 
 # Profile
@@ -62,7 +63,7 @@ from .users import ManageUsersView, ManageUserDetailView
 from .courses import (
     CourseListView, ManageCoursesView, ManageCourseDetailView,
     AdminCoursesView, RestrictCourseView, UnrestrictCourseView,
-    CourseDetailView,
+    CourseDetailView, CourseProgressView, LessonCompleteView,
 )
 
 # Trainers
@@ -75,10 +76,12 @@ from .trainers import (
 
 # Payments
 from .payments import (
-    PaystackInitializeView, CoursePayInitializeView, CoursePayVerifyView,
-    CourseEnrollmentStatusView, TrainerPendingEnrollmentsView,
-    TrainerConfirmEnrollmentView, TrainerRejectEnrollmentView,
+    PaystackInitializeView, PaystackTrainerVerifyView,
+    FastTrackInitializeView, FastTrackVerifyView,
+    CoursePayInitializeView, CoursePayVerifyView,
+    CourseEnrollmentStatusView,
     AdminPendingRefundsView, AdminProcessRefundView, AdminRejectRefundView,
+    paystack_webhook,
 )
 
 # Fast track
@@ -87,6 +90,15 @@ from .fast_track import (
     ManageFastTrackVideoDetailView, FastTrackVideosForCourseView,
     FetchVideoDurationView,
 )
+
+# Modules & Lessons
+from .modules import (
+    ManageModulesView, ManageModuleDetailView,
+    ManageLessonsView, ManageLessonDetailView,
+)
+
+# Media upload
+from .base import MediaUploadView
 
 # Notifications
 from .notifications import (
@@ -104,7 +116,4 @@ from .dunis import (
     DunisPendingPaymentsView, DunisConfirmPaymentView,
     DunisAllTrainersView, DunisToggleFastTrackView,
 )
-
-# Program management helpers
-from .programs import _apply_program_data as apply_program_data
 

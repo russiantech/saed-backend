@@ -16,6 +16,7 @@ class SubmitComplaintView(APIView):
         data = request.data
         subject = data.get("subject", "").strip()
         message = data.get("message", "").strip()
+        recipient = data.get("recipient", "").strip()
 
         if not subject:
             return Response({"error": "Subject is required.",
@@ -26,16 +27,27 @@ class SubmitComplaintView(APIView):
                              "fields": {"message": "Message is required."}},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        valid_recipients = {"saed_admin", "dunis_admin"}
+        if recipient and recipient not in valid_recipients:
+            return Response({"error": "Invalid recipient.",
+                             "fields": {"recipient": "Invalid recipient."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
         try:
             sender_name = request.user.get_full_name() or request.user.email
-            admin_users = User.objects.filter(profile__role__in=["saed_admin", "dunis_admin"])
+            attachment_url = data.get("attachmentUrl", "").strip()
+            if recipient:
+                admin_users = User.objects.filter(profile__role=recipient)
+            else:
+                admin_users = User.objects.filter(profile__role__in=["saed_admin", "dunis_admin"])
             for admin in admin_users:
                 Complaint.objects.create(
                     user=admin,
                     subject=subject,
                     message=f"From: {sender_name} ({request.user.email})\n\n{message}",
+                    attachment_url=attachment_url,
                 )
-            _log_info(f"Complaint distributed to {admin_users.count()} admins")
+            _log_info(f"Complaint distributed to {admin_users.count()} admins" + (f" (recipient={recipient})" if recipient else ""))
 
             _notify_admins_email(
                 subject=f"New Complaint: {subject}",
@@ -43,6 +55,7 @@ class SubmitComplaintView(APIView):
                     f"A new complaint has been submitted.\n"
                     f"From: {sender_name} ({request.user.email})\n"
                     f"Subject: {subject}\n\n{message}"
+                    + (f"\n\nAttachment: {attachment_url}" if attachment_url else "")
                 ),
                 email_type="general",
                 from_email=request.user.email,
@@ -55,7 +68,8 @@ class SubmitComplaintView(APIView):
                     f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
                     f'<tr><td style="padding:8px;font-weight:bold;">From</td><td style="padding:8px;">{sender_name} ({request.user.email})</td></tr>'
                     f'<tr><td style="padding:8px;font-weight:bold;">Subject</td><td style="padding:8px;">{subject}</td></tr>'
-                    f'</table>'
+                    + (f'<tr><td style="padding:8px;font-weight:bold;">Attachment</td><td style="padding:8px;"><a href="{attachment_url}">View Attachment</a></td></tr>' if attachment_url else '')
+                    + f'</table>'
                     f'<p style="color:#333;line-height:1.6;">{message}</p>'
                     f'</div></div>'
                 ),

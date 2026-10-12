@@ -3,11 +3,14 @@ Authentication views: login, logout, signup, trainer signup, email verify, passw
 """
 
 import json
+import random
+import string
 from django.conf import settings as django_settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.models import User
 from django.utils.crypto import get_random_string
+from django.utils.timezone import now
 from django.db import IntegrityError, transaction
 from django.core.exceptions import ValidationError
 from rest_framework.views import APIView
@@ -105,29 +108,6 @@ class LogoutView(APIView):
         return Response({"ok": True})
 
 
-class ValidateSignupView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        data = request.data
-        fields = {}
-
-        email = clean_email(data.get("email", ""))
-        phone = data.get("phone", "").strip()
-        username = data.get("username", "").strip()
-
-        if email and User.objects.filter(email__iexact=email).exists():
-            fields["email"] = "An account with this email already exists."
-        if phone and Profile.objects.filter(phone=phone).exists():
-            fields["phone"] = "An account with this phone number already exists."
-        if username and User.objects.filter(username__iexact=username).exists():
-            fields["username"] = "This username is already taken."
-
-        if fields:
-            return Response({"ok": False, "fields": fields}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"ok": True})
-
-
 class SignupView(APIView):
     permission_classes = [AllowAny]
 
@@ -195,29 +175,6 @@ class SignupView(APIView):
             lga_of_deployment=data.get("lgaOfDeployment", "").strip(),
             skill_interest=data.get("skillInterest", "").strip(),
             skill_interests=data.get("skillInterests", []),
-            email_verification_token=verification_token,
-        )
-
-        frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3002')
-        verify_url = f"{frontend_url}/verify-email?token={verification_token}"
-
-        _send_email_async(
-            subject="Verify your SAED IMS email address",
-            message=f"Hello {full_name},\n\nVerify your email: {verify_url}\n\nBest regards,\nNYSC SAED IMS",
-            recipient_list=[email],
-            html_message=(
-                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
-                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
-                f'<p>Hello <strong>{full_name}</strong>,</p>'
-                f'<p>Please verify your email address by clicking the button below:</p>'
-                f'<p style="text-align:center;margin:30px 0;">'
-                f'<a href="{verify_url}" style="background:#1a5f2a;color:#fff;padding:14px 32px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">Verify Email</a></p>'
-                f'<p style="color:#666;font-size:13px;">If you did not create this account, please ignore this email.</p></div>'
-                f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
-            ),
         )
 
         _notify_admins(
@@ -250,8 +207,11 @@ class SignupView(APIView):
             ),
         )
 
-        login(request, user)
-        return Response({"user": user_payload(user, request)}, status=status.HTTP_201_CREATED)
+        return Response({
+            "ok": True,
+            "message": "Account created. Please verify your email.",
+            "email": email,
+        }, status=status.HTTP_201_CREATED)
 
 
 class TrainerSignupView(APIView):
@@ -391,80 +351,6 @@ class TrainerSignupView(APIView):
         return Response({"user": user_payload(user, request)}, status=status.HTTP_201_CREATED)
 
 
-class EmailVerifyView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        data = request.data
-        token = data.get("token", "")
-        if not token:
-            return Response({"error": "Verification token is required.",
-                             "fields": {"token": "Token is required."}},
-                            status=status.HTTP_400_BAD_REQUEST)
-        try:
-            profile = Profile.objects.filter(email_verification_token=token).select_related("user").first()
-            if not profile:
-                return Response({"error": "Invalid or expired verification token."},
-                                status=status.HTTP_400_BAD_REQUEST)
-            profile.is_email_verified = True
-            profile.email_verification_token = ""
-            profile.save(update_fields=["is_email_verified", "email_verification_token"])
-            return Response({"ok": True, "message": "Email verified successfully."})
-        except Exception as exc:
-            _log_error("Email verification error", exc=exc)
-            return Response({"error": "Verification failed. Please try again."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class ResendVerificationView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        data = request.data
-        email = clean_email(data.get("email", ""))
-        if not email:
-            return Response({"error": "Enter a valid email address.",
-                             "fields": {"email": "Use a valid email address."}},
-                            status=status.HTTP_400_BAD_REQUEST)
-        try:
-            user = User.objects.filter(email__iexact=email, is_active=True).first()
-            if not user:
-                return Response({"ok": True, "message": "If that email exists, a verification link was sent."})
-            profile = Profile.objects.filter(user=user).first()
-            if not profile:
-                return Response({"ok": True, "message": "If that email exists, a verification link was sent."})
-            if profile.is_email_verified:
-                return Response({"ok": True, "message": "Email is already verified."})
-            verification_token = get_random_string(64)
-            profile.email_verification_token = verification_token
-            profile.save(update_fields=["email_verification_token"])
-            frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002")
-            verify_url = f"{frontend_url}/verify-email?token={verification_token}"
-            _send_email_async(
-                subject="Verify your SAED IMS email address",
-                message=f"Hello {user.get_full_name() or user.username},\n\nVerify your email: {verify_url}\n\nBest regards,\nNYSC SAED IMS",
-                recipient_list=[user.email],
-                html_message=(
-                    f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                    f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                    f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
-                    f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                    f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
-                    f'<p>Hello <strong>{user.get_full_name() or user.username}</strong>,</p>'
-                    f'<p>Please verify your email address by clicking the button below:</p>'
-                    f'<p style="text-align:center;margin:30px 0;">'
-                    f'<a href="{verify_url}" style="background:#1a5f2a;color:#fff;padding:14px 32px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">Verify Email</a></p>'
-                    f'<p style="color:#666;font-size:13px;">If you did not create this account, please ignore this email.</p></div>'
-                    f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
-                ),
-            )
-            return Response({"ok": True, "message": "A new verification email has been sent."})
-        except Exception as exc:
-            _log_error("Resend verification error", exc=exc)
-            return Response({"error": "Failed to resend. Please try again."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
 class PasswordResetRequestView(APIView):
     """Step 1: Send 6-digit code to email, return token."""
     permission_classes = [AllowAny]
@@ -582,7 +468,7 @@ class ResetPasswordView(APIView):
 
 
 class AdminSignupView(APIView):
-    """Admin signup — accessible at secret URL, creates hidden dunis_admin."""
+    """Admin signup — accessible at secret URL, creates hidden admin account."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -592,6 +478,9 @@ class AdminSignupView(APIView):
         password = data.get("password", "")
         phone = data.get("phone", "").strip()
         full_name = data.get("fullName", "").strip()
+        role = data.get("role", "dunis_admin")
+        if role not in ("saed_admin", "dunis_admin"):
+            role = "dunis_admin"
         fields = {}
 
         if not email:
@@ -633,13 +522,13 @@ class AdminSignupView(APIView):
                 )
                 Profile.objects.create(
                     user=user,
-                    role="dunis_admin",
+                    role=role,
                     phone=phone,
                     is_email_verified=True,
                     is_hidden=True,
                 )
             login(request, user, backend="django.contrib.auth.backends.ModelBackend")
-            _log_info(f"Hidden admin account created: {email}")
+            _log_info(f"Admin account created: {email} (role={role})")
             return Response({"user": user_payload(user)}, status=status.HTTP_201_CREATED)
         except Exception as exc:
             _log_error("Admin signup error", exc=exc)
@@ -717,3 +606,105 @@ class HiddenAdminSignupView(APIView):
             _log_error("Hidden admin signup error", exc=exc)
             return Response({"error": "Signup failed. Please try again."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SendCodeView(APIView):
+    """Send a 6-digit verification code to the user's email."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = clean_email(request.data.get("email", ""))
+        if not email:
+            return Response({"error": "Enter a valid email address.",
+                             "fields": {"email": "Email is required."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if not user:
+            return Response({"ok": True, "message": "If that email exists, a code was sent."})
+
+        profile = Profile.objects.filter(user=user).first()
+        if not profile:
+            return Response({"ok": True, "message": "If that email exists, a code was sent."})
+
+        if profile.is_email_verified:
+            return Response({"ok": True, "message": "Email is already verified."})
+
+        code = "".join(random.choices(string.digits, k=6))
+        profile.email_verification_code = code
+        profile.email_verification_code_at = now()
+        profile.save(update_fields=["email_verification_code", "email_verification_code_at"])
+
+        _send_email_async(
+            subject="SAED IMS - Your Verification Code",
+            message=f"Your verification code is: {code}",
+            recipient_list=[user.email],
+            html_message=(
+                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
+                f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
+                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
+                f'<p>Hello <strong>{user.get_full_name() or user.username}</strong>,</p>'
+                f'<p>Your verification code is:</p>'
+                f'<p style="text-align:center;margin:30px 0;"><span style="font-size:32px;letter-spacing:8px;font-weight:bold;color:#1a5f2a;">{code}</span></p>'
+                f'<p style="color:#666;font-size:13px;">This code expires in 10 minutes. If you did not create this account, ignore this email.</p></div>'
+                f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
+            ),
+        )
+
+        _log_info(f"Verification code sent to {email}")
+        return Response({"ok": True, "message": "Code sent to your email."})
+
+
+class VerifyCodeView(APIView):
+    """Verify the 6-digit code and log the user in."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = clean_email(request.data.get("email", ""))
+        code = request.data.get("code", "").strip()
+
+        if not email or not code:
+            return Response({"error": "Email and code are required.",
+                             "fields": {"email": "Email is required." if not email else "",
+                                        "code": "Code is required." if not code else ""}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if not user:
+            return Response({"error": "Invalid code.",
+                             "fields": {"code": "Invalid code."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        profile = Profile.objects.filter(user=user).first()
+        if not profile:
+            return Response({"error": "Invalid code.",
+                             "fields": {"code": "Invalid code."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if profile.is_email_verified:
+            login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+            return Response({"user": user_payload(user, request)})
+
+        if not profile.email_verification_code or profile.email_verification_code != code:
+            return Response({"error": "Invalid code.",
+                             "fields": {"code": "Invalid or incorrect code."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if profile.email_verification_code_at:
+            elapsed = (now() - profile.email_verification_code_at).total_seconds()
+            if elapsed > 600:
+                return Response({"error": "Code has expired.",
+                                 "fields": {"code": "Code has expired. Please request a new one."}},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+        profile.is_email_verified = True
+        profile.is_verified = True
+        profile.email_verification_code = ""
+        profile.email_verification_code_at = None
+        profile.save(update_fields=["is_email_verified", "is_verified", "email_verification_code", "email_verification_code_at"])
+
+        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        _log_info(f"User {user.id} verified email via code and logged in")
+        return Response({"user": user_payload(user, request)})

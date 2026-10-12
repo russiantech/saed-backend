@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from ..models import Application, Connection, Course, Profile
+from ..models import Connection, Course, CourseEnrollment, Profile
 from .base import (
     _log_error, role_for, application_payload, program_payload,
     managed_programs_for, IsAuthenticatedAPI,
@@ -24,15 +24,15 @@ class DashboardView(APIView):
             payload = {"stats": {}, "applications": []}
 
             if user_role == "corps_member":
-                applications = Application.objects.filter(applicant=user).select_related("program")
+                enrollments = CourseEnrollment.objects.filter(student=user).select_related("course")
                 my_connections = Connection.objects.filter(corps_member=user).count()
                 payload["stats"] = {
-                    "applications": applications.count(),
-                    "pending": applications.filter(status="pending").count(),
-                    "approved": applications.filter(status="approved").count(),
+                    "applications": enrollments.count(),
+                    "pending": enrollments.filter(status="pending").count(),
+                    "approved": enrollments.filter(status="confirmed").count(),
                     "connections": my_connections,
                 }
-                payload["applications"] = [application_payload(item) for item in applications[:5]]
+                payload["applications"] = [application_payload(item) for item in enrollments[:5]]
 
             elif user_role == "trainer":
                 my_courses = Course.objects.filter(trainer=user, is_active=True)

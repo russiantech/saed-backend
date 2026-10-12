@@ -1,9 +1,12 @@
+import hashlib
+import hmac
 import json
+from unittest.mock import patch, MagicMock
 
 from django.contrib.auth.models import User
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 
-from .models import Application, Profile, Program
+from .models import Connection, Course, CourseEnrollment, Profile
 
 
 def post_json(client, path, payload):
@@ -23,29 +26,27 @@ class SaedApiTests(TestCase):
         self.other_trainer = User.objects.create_user("other-trainer@example.com", "other-trainer@example.com", "Password123!")
         Profile.objects.create(user=self.other_trainer, role="trainer", is_authorized=True, has_paid=True, payment_verified=True)
         self.admin = User.objects.create_user("admin@example.com", "admin@example.com", "Password123!")
-        Profile.objects.create(user=self.admin, role="saed_admin")
-        self.program = Program.objects.create(
+        Profile.objects.create(user=self.admin, role="saed_admin", is_email_verified=True)
+        self.program = Course.objects.create(
             title="ICT Skills",
             category="ict",
             description="Digital skills",
             duration_weeks=4,
-            capacity=20,
+            max_students=20,
             trainer=self.trainer,
-            trainer_name="Lead Trainer",
             location="Lagos",
         )
-        self.other_program = Program.objects.create(
+        self.other_program = Course.objects.create(
             title="Food Skills",
             category="food_processing",
             description="Food business skills",
             duration_weeks=6,
-            capacity=10,
+            max_students=10,
             trainer=self.other_trainer,
-            trainer_name="Other Trainer",
             location="Abuja",
         )
-        self.application = Application.objects.create(applicant=self.member, program=self.program)
-        self.other_application = Application.objects.create(applicant=self.admin, program=self.other_program)
+        self.application = CourseEnrollment.objects.create(student=self.member, course=self.program)
+        self.other_application = CourseEnrollment.objects.create(student=self.admin, course=self.other_program)
 
     def login(self, user):
         client = Client()
@@ -58,7 +59,7 @@ class SaedApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.application.refresh_from_db()
-        self.assertEqual(self.application.status, "approved")
+        self.assertEqual(self.application.status, "confirmed")
 
     def test_member_cannot_manage_applications(self):
         client = self.login(self.member)
@@ -66,7 +67,7 @@ class SaedApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_admin_can_create_trainer(self):
+    def test_admin_cannot_create_trainer_via_api(self):
         client = self.login(self.admin)
         response = post_json(
             client,
@@ -79,8 +80,7 @@ class SaedApiTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(User.objects.get(email="new-trainer@example.com").profile.role, "trainer")
+        self.assertEqual(response.status_code, 405)
 
     def test_admin_cannot_create_admin_account(self):
         client = self.login(self.admin)
@@ -95,7 +95,7 @@ class SaedApiTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 405)
         self.assertFalse(User.objects.filter(email="new-admin@example.com").exists())
 
     def test_public_signup_cannot_create_trainer_account(self):
@@ -148,7 +148,7 @@ class SaedApiTests(TestCase):
         client = self.login(self.admin)
         response = patch_json(client, f"/api/manage/users/{self.admin.id}/", {"isActive": False})
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 403)
         self.admin.refresh_from_db()
         self.assertTrue(self.admin.is_active)
 
@@ -162,6 +162,52 @@ class SaedApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["user"]["role"], "saed_admin")
 
+    def test_email_verification_is_idempotent(self):
+        profile = Profile.objects.create(
+            user=User.objects.create_user(
+                "verify@example.com", "verify@example.com", "Password123!"
+            ),
+            role="corps_member",
+            phone="0801",
+            email_verification_code="123456",
+        )
+
+        client = Client()
+        first = post_json(client, "/api/auth/verify-code/", {"email": "verify@example.com", "code": "123456"})
+        self.assertEqual(first.status_code, 200)
+        profile.refresh_from_db()
+        self.assertTrue(profile.is_email_verified)
+
+        second = post_json(client, "/api/auth/verify-code/", {"email": "verify@example.com", "code": "123456"})
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(profile.is_email_verified)
+
+    @override_settings(PAYSTACK_SECRET_KEY="test_secret")
+    @patch("saed.views.payments.http.client.HTTPSConnection")
+    def test_course_payment_resumes_blank_pending_enrollment(self, mock_conn_cls):
+        mock_conn = mock_conn_cls.return_value
+        mock_response = mock_conn.getresponse.return_value
+        mock_response.read.return_value = b'{"status": true, "data": {"authorization_url": "https://pay.example/checkout", "access_code": "access"}}'
+
+        course = Course.objects.create(
+            trainer=self.trainer,
+            title="Paid Course",
+            category="ict",
+            price="1000.00",
+        )
+        enrollment = CourseEnrollment.objects.create(
+            student=self.member, course=course, status="pending", payment_reference=""
+        )
+        Connection.objects.create(
+            corps_member=self.member, trainer=self.trainer, status="active"
+        )
+
+        response = post_json(self.login(self.member), "/api/courses/pay/", {"courseId": course.id})
+
+        self.assertEqual(response.status_code, 200)
+        enrollment.refresh_from_db()
+        self.assertTrue(enrollment.payment_reference.startswith("SAED-COURSE-"))
+
     def test_admin_can_create_program(self):
         client = self.login(self.admin)
         response = post_json(
@@ -172,19 +218,20 @@ class SaedApiTests(TestCase):
                 "category": "agro_allied",
                 "description": "Farm business training",
                 "durationWeeks": 6,
-                "capacity": 30,
-                "trainerId": self.trainer.id,
+                "maxStudents": 30,
+                "price": 0,
                 "location": "Abuja",
+                "startDate": "2026-10-01",
+                "endDate": "2026-12-01",
                 "isActive": True,
             },
         )
 
         self.assertEqual(response.status_code, 201)
-        program = Program.objects.get(title="Agro Enterprise")
-        self.assertEqual(program.trainer, self.trainer)
-        self.assertEqual(program.trainer_name, self.trainer.email)
+        program = Course.objects.get(title="Agro Enterprise")
+        self.assertEqual(program.trainer, self.admin)
 
-    def test_trainer_cannot_create_program(self):
+    def test_trainer_can_create_program(self):
         client = self.login(self.trainer)
         response = post_json(
             client,
@@ -194,15 +241,17 @@ class SaedApiTests(TestCase):
                 "category": "agro_allied",
                 "description": "Farm business training",
                 "durationWeeks": 6,
-                "capacity": 30,
-                "trainerId": self.trainer.id,
+                "maxStudents": 30,
+                "price": 0,
                 "location": "Abuja",
+                "startDate": "2026-10-01",
+                "endDate": "2026-12-01",
                 "isActive": True,
             },
         )
 
-        self.assertEqual(response.status_code, 403)
-        self.assertFalse(Program.objects.filter(title="Agro Enterprise").exists())
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(Course.objects.filter(title="Agro Enterprise", trainer=self.trainer).exists())
 
     def test_trainer_only_sees_own_programs(self):
         client = self.login(self.trainer)
@@ -213,13 +262,13 @@ class SaedApiTests(TestCase):
         self.assertIn(self.program.id, program_ids)
         self.assertNotIn(self.other_program.id, program_ids)
 
-    def test_trainer_cannot_edit_program(self):
+    def test_trainer_can_edit_own_program(self):
         client = self.login(self.trainer)
         response = patch_json(client, f"/api/manage/programs/{self.program.id}/", {"title": "Changed"})
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
         self.program.refresh_from_db()
-        self.assertEqual(self.program.title, "ICT Skills")
+        self.assertEqual(self.program.title, "Changed")
 
     def test_trainer_only_sees_own_program_applications(self):
         client = self.login(self.trainer)
@@ -255,13 +304,18 @@ class SaedApiTests(TestCase):
 
     def test_password_reset_changes_password(self):
         client = Client()
-        response = post_json(client, "/api/auth/password-reset/", {"email": "member@example.com"})
+        response = post_json(client, "/api/auth/forgot-password/", {"email": "member@example.com"})
+        self.assertEqual(response.status_code, 200)
         payload = response.json()
+        token = payload["token"]
+
+        profile = Profile.objects.get(user=self.member)
+        code = profile.password_reset_code
 
         response = post_json(
             client,
-            "/api/auth/password-reset/confirm/",
-            {"uid": payload["uid"], "token": payload["token"], "password": "NewPassword123!"},
+            "/api/auth/reset-password/",
+            {"email": "member@example.com", "token": token, "code": code, "password": "NewPassword123!"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -296,4 +350,94 @@ class SaedApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.application.refresh_from_db()
-        self.assertEqual(self.application.status, "approved")
+        self.assertEqual(self.application.status, "confirmed")
+
+
+@override_settings(PAYSTACK_SECRET_KEY="test_secret_key")
+class PaymentWebhookTests(TestCase):
+    def setUp(self):
+        self.trainer = User.objects.create_user("trainer@example.com", "trainer@example.com", "Password123!")
+        Profile.objects.create(user=self.trainer, role="trainer", payment_reference="SAED-TEST123")
+        self.member = User.objects.create_user("member@example.com", "member@example.com", "Password123!")
+        Profile.objects.create(user=self.member, role="corps_member")
+        self.course = Course.objects.create(
+            title="Test Course", category="ict", trainer=self.trainer,
+            price=50000, max_students=20,
+        )
+        self.enrollment = CourseEnrollment.objects.create(
+            student=self.member, course=self.course,
+            payment_reference="SAED-COURSE-TEST123", amount_paid=50000,
+        )
+
+    def _sign(self, body):
+        return hmac.new(
+            b"test_secret_key", body.encode(), hashlib.sha512
+        ).hexdigest()
+
+    def test_webhook_rejects_invalid_signature(self):
+        client = Client()
+        body = json.dumps({"event": "charge.success", "data": {}})
+        response = client.post(
+            "/api/webhooks/paystack/",
+            data=body,
+            content_type="application/json",
+            HTTP_X_PAYSTACK_SIGNATURE="invalid_sig",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_webhook_accepts_valid_signature(self):
+        client = Client()
+        body = json.dumps({"event": "charge.success", "data": {"reference": "SAED-TEST123", "metadata": {"type": "trainer_activation"}}})
+        sig = self._sign(body)
+        response = client.post(
+            "/api/webhooks/paystack/",
+            data=body,
+            content_type="application/json",
+            HTTP_X_PAYSTACK_SIGNATURE=sig,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.trainer.profile.refresh_from_db()
+        self.assertTrue(self.trainer.profile.has_paid)
+
+    def test_webhook_handles_course_payment(self):
+        client = Client()
+        body = json.dumps({"event": "charge.success", "data": {"reference": "SAED-COURSE-TEST123", "metadata": {"type": "course_payment"}}})
+        sig = self._sign(body)
+        response = client.post(
+            "/api/webhooks/paystack/",
+            data=body,
+            content_type="application/json",
+            HTTP_X_PAYSTACK_SIGNATURE=sig,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.enrollment.refresh_from_db()
+        self.assertTrue(self.enrollment.payment_verified)
+        self.assertEqual(self.enrollment.status, "confirmed")
+
+    def test_webhook_ignores_non_success_events(self):
+        client = Client()
+        body = json.dumps({"event": "charge.failed", "data": {"reference": "SAED-TEST123"}})
+        sig = self._sign(body)
+        response = client.post(
+            "/api/webhooks/paystack/",
+            data=body,
+            content_type="application/json",
+            HTTP_X_PAYSTACK_SIGNATURE=sig,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.trainer.profile.refresh_from_db()
+        self.assertFalse(self.trainer.profile.has_paid)
+
+    def test_webhook_idempotent_for_already_processed(self):
+        self.trainer.profile.has_paid = True
+        self.trainer.profile.save(update_fields=["has_paid"])
+        client = Client()
+        body = json.dumps({"event": "charge.success", "data": {"reference": "SAED-TEST123", "metadata": {"type": "trainer_activation"}}})
+        sig = self._sign(body)
+        response = client.post(
+            "/api/webhooks/paystack/",
+            data=body,
+            content_type="application/json",
+            HTTP_X_PAYSTACK_SIGNATURE=sig,
+        )
+        self.assertEqual(response.status_code, 200)

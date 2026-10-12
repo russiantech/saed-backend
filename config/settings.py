@@ -31,7 +31,7 @@ def env_list(name, default=""):
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
 
 
-DEBUG = env_bool("DJANGO_DEBUG", True)
+DEBUG = env_bool("DJANGO_DEBUG", False)
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-saed-secret-key" if DEBUG else "")
 if not SECRET_KEY:
     raise RuntimeError("DJANGO_SECRET_KEY is required when DJANGO_DEBUG is false.")
@@ -245,7 +245,7 @@ MD_EMAIL = os.getenv("MD_EMAIL", "")
 EMAIL_SSL_KEYFILE = None
 EMAIL_SSL_CERTFILE = None
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3001")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3002")
 
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "")
 PAYSTACK_PUBLIC_KEY = os.getenv("PAYSTACK_PUBLIC_KEY", "")

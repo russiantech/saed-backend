@@ -1,7 +1,7 @@
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 
-from saed.models import Profile, Program
+from saed.models import Profile, Course
 
 
 PROGRAMS = [
@@ -157,7 +157,7 @@ PROGRAMS = [
 
 
 class Command(BaseCommand):
-    help = "Seed the local SAED IMS database with demo users and programs."
+    help = "Seed the local SAED IMS database with demo users and courses."
 
     def handle(self, *args, **options):
         admin, _ = User.objects.get_or_create(
@@ -203,6 +203,18 @@ class Command(BaseCommand):
         member_profile.save(update_fields=["role"])
 
         for item in PROGRAMS:
-            Program.objects.update_or_create(title=item["title"], defaults={**item, "trainer": trainer})
+            Course.objects.update_or_create(
+                title=item["title"],
+                defaults={
+                    "category": item["category"],
+                    "description": item["description"],
+                    "duration_weeks": item["duration_weeks"],
+                    "capacity": item["capacity"],
+                    "trainer_name": item["trainer_name"],
+                    "location": item["location"],
+                    "trainer": trainer,
+                    "is_active": True,
+                },
+            )
 
         self.stdout.write(self.style.SUCCESS("Seeded SAED IMS demo data."))
