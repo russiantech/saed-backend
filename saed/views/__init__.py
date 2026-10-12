@@ -40,7 +40,6 @@ def me(request):
 # Auth views (DRF APIViews)
 from .auth import (
     LoginView, LogoutView, SignupView, TrainerSignupView, AdminSignupView,
-    HiddenAdminSignupView,
     PasswordResetRequestView, VerifyResetCodeView, ResetPasswordView,
     SendCodeView, VerifyCodeView,
 )
@@ -68,7 +67,7 @@ from .courses import (
 
 # Trainers
 from .trainers import (
-    AvailableTrainersView, TrainerDetailView, SelectTrainersView,
+    AvailableTrainersView, TrainerDetailView,
     MyTrainersView, ConnectTrainerView, MyConnectionsView,
     MyCorpersView, ConnectionApproveView, ConnectionRejectView,
     CorperProfileForTrainerView,
@@ -86,8 +85,7 @@ from .payments import (
 
 # Fast track
 from .fast_track import (
-    TraineeFastTrackCoursesView, ManageFastTrackVideosView,
-    ManageFastTrackVideoDetailView, FastTrackVideosForCourseView,
+    TraineeFastTrackCoursesView, FastTrackVideosForCourseView,
     FetchVideoDurationView,
 )
 

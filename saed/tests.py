@@ -27,6 +27,8 @@ class SaedApiTests(TestCase):
         Profile.objects.create(user=self.other_trainer, role="trainer", is_authorized=True, has_paid=True, payment_verified=True)
         self.admin = User.objects.create_user("admin@example.com", "admin@example.com", "Password123!")
         Profile.objects.create(user=self.admin, role="saed_admin", is_email_verified=True)
+        self.dunis_admin = User.objects.create_user("dunis@example.com", "dunis@example.com", "Password123!")
+        Profile.objects.create(user=self.dunis_admin, role="dunis_admin", is_email_verified=True)
         self.program = Course.objects.create(
             title="ICT Skills",
             category="ict",
@@ -208,7 +210,7 @@ class SaedApiTests(TestCase):
         enrollment.refresh_from_db()
         self.assertTrue(enrollment.payment_reference.startswith("SAED-COURSE-"))
 
-    def test_admin_can_create_program(self):
+    def test_saed_admin_cannot_create_program(self):
         client = self.login(self.admin)
         response = post_json(
             client,
@@ -226,10 +228,29 @@ class SaedApiTests(TestCase):
                 "isActive": True,
             },
         )
+        self.assertEqual(response.status_code, 403)
 
+    def test_dunis_admin_can_create_program(self):
+        client = self.login(self.dunis_admin)
+        response = post_json(
+            client,
+            "/api/manage/programs/",
+            {
+                "title": "Agro Enterprise Dunis",
+                "category": "agro_allied",
+                "description": "Farm business training",
+                "durationWeeks": 6,
+                "maxStudents": 30,
+                "price": 0,
+                "location": "Abuja",
+                "startDate": "2026-10-01",
+                "endDate": "2026-12-01",
+                "isActive": True,
+            },
+        )
         self.assertEqual(response.status_code, 201)
-        program = Course.objects.get(title="Agro Enterprise")
-        self.assertEqual(program.trainer, self.admin)
+        program = Course.objects.get(title="Agro Enterprise Dunis")
+        self.assertEqual(program.trainer, self.dunis_admin)
 
     def test_trainer_can_create_program(self):
         client = self.login(self.trainer)

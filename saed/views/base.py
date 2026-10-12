@@ -627,6 +627,14 @@ def trainer_program_payload(course):
 
 def course_payload(course):
     trainer = course.trainer
+    enrolled_count = getattr(course, "enrolled_count", None)
+    if enrolled_count is None:
+        try:
+            enrolled_count = course.enrollments.filter(status="confirmed").count()
+        except Exception:
+            enrolled_count = CourseEnrollment.objects.filter(course=course, status="confirmed").count()
+    capacity = course.max_students
+    available_slots = max(capacity - enrolled_count, 0)
     return {
         "id": course.id,
         "trainerId": course.trainer_id,
@@ -639,7 +647,10 @@ def course_payload(course):
         "location": course.location,
         "startDate": course.start_date.isoformat() if course.start_date else None,
         "endDate": course.end_date.isoformat() if course.end_date else None,
-        "maxStudents": course.max_students,
+        "maxStudents": capacity,
+        "capacity": capacity,
+        "availableSlots": available_slots,
+        "enrolledCount": enrolled_count,
         "isActive": course.is_active,
         "hasFastTrack": course.has_fast_track,
         "isRestricted": course.is_restricted,

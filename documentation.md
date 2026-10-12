@@ -205,34 +205,37 @@ All backend routes are under `/api/`.
 | `/api/health/` | GET | Public | Check API health. |
 | `/api/csrf/` | GET | Public | Set and return CSRF token. |
 | `/api/auth/me/` | GET | Public | Return current session user or `null`. |
-| `/api/auth/login/` | POST | Public | Log in with email and password. |
+| `/api/auth/login/` | POST | Public | Log in with email and password (verified accounts only). |
 | `/api/auth/logout/` | POST | Authenticated | Log out current user. |
-| `/api/auth/signup/` | POST | Public | Create a corps member account. |
-| `/api/auth/trainer-signup/` | POST | Public | Create a trainer account (requires admin authorization). |
-| `/api/auth/password-reset/` | POST | Public | Request a password reset (returns uid/token for the requested email if it exists). |
-| `/api/auth/password-reset/confirm/` | POST | Public | Confirm password reset with uid/token. |
+| `/api/auth/signup/` | POST | Public | Create a corps member account and dispatch 6-digit OTP. |
+| `/api/auth/trainer-signup/` | POST | Public | Create a trainer account and dispatch 6-digit OTP. |
+| `/api/auth/admin-signup/` | POST | Public (Secret required) | Create an admin account using `ADMIN_SIGNUP_SECRET` and dispatch 6-digit OTP. |
+| `/api/auth/send-code/` | POST | Public | Send/resend 6-digit verification code to email (45s debounce). |
+| `/api/auth/verify-code/` | POST | Public | Verify 6-digit code, mark email verified, log in session, and return profile. |
+| `/api/auth/forgot-password/` | POST | Public | Request a password reset (sends 6-digit code to email and returns reset token). |
+| `/api/auth/verify-reset-code/` | POST | Public | Verify 6-digit password reset code. |
+| `/api/auth/reset-password/` | POST | Public | Set new password with email, token, code, and new password. |
 | `/api/dashboard/` | GET | Authenticated | Return dashboard counts and recent data. For trainers the response also includes a `trainerPrograms` array (each with their nested `applications`). |
 | `/api/programs/` | GET | Public | Return active programs and the list of category choices. |
 | `/api/applications/` | GET | Corps Member | Return the current user's applications. Trainers and admins are rejected. |
-| `/api/applications/create/` | POST | Corps Member | Apply to a program. Trainer and admin accounts are rejected. |
+| `/api/applications/create/` | POST | Corps Member | Apply/enroll in a course. Price validation ensures free courses cannot bypass payment. |
 | `/api/manage/users/` | GET | Admin | List all users (with profile data, including role, active status, and authorization status). |
-| `/api/manage/users/` | POST | Admin | Create a trainer account only. |
-| `/api/manage/users/<id>/` | PATCH | Admin | Update user profile fields, role to `corps_member`/`trainer`, active status, or authorization status. Self role changes and self deactivation are blocked. |
-| `/api/manage/programs/` | GET | Admin/Trainer | List programs (admins see all; trainers see only programs they are assigned to). Response also includes `trainers` (authorized trainer users) and `categories`. |
-| `/api/manage/programs/` | POST | Admin | Create a program. Trainer accounts are rejected. |
-| `/api/manage/programs/<id>/` | PATCH | Admin/Trainer | Update a program. Trainers can only update programs they are assigned to. |
+| `/api/manage/users/` | POST | Admin | Disabled (returns 405). |
+| `/api/manage/users/<id>/` | PATCH | Admin | Update user profile fields, role to `corps_member`/`trainer`. Account activation/deactivation restricted to Dunis Admin. Self role changes and self deactivation are blocked. |
+| `/api/manage/programs/` | GET | Admin/Trainer | List programs (admins see all; trainers see only programs they are assigned to). Response also includes `trainers` and `categories`. |
+| `/api/manage/programs/` | POST | Dunis Admin/Trainer | Create a program/course. **Blocked for SAED Admin (403 Forbidden).** |
+| `/api/manage/programs/<id>/` | PATCH | Dunis Admin/Trainer | Update a program/course. **Blocked for SAED Admin (403 Forbidden).** Trainers can only update their own courses. |
+| `/api/manage/programs/<id>/restrict/` | POST | Admin | Restrict a course (SAED Admin and Dunis Admin). |
+| `/api/manage/programs/<id>/unrestrict/` | POST | Admin | Unrestrict a course (SAED Admin and Dunis Admin). |
 | `/api/manage/applications/` | GET | Admin/Trainer | List all applications. Trainers see only applications for programs they are assigned to. |
 | `/api/manage/applications/<id>/` | PATCH | Admin/Trainer | Approve, decline, or complete an application. Trainers cannot modify a `completed` application; admins can override the immutability. |
 | `/api/manage/courses/` | GET/POST | Trainer | List/create courses. |
 | `/api/manage/courses/<id>/` | PATCH/DELETE | Trainer | Update/delete a course. |
-| `/api/manage/fast-track-videos/` | GET/POST | Trainer (authorized) | List/create fast track videos. |
-| `/api/manage/fast-track-videos/<id>/` | PATCH/DELETE | Trainer (authorized) | Update/delete a fast track video. |
 | `/api/manage/fetch-video-duration/` | POST | Trainer (authorized) | Fetch video duration from URL. |
 | `/api/courses/` | GET | Authenticated | List active courses. |
 | `/api/trainers/` | GET | Authenticated | List authorized trainers (filtered by LGA and skill). |
 | `/api/connect/` | POST | Corps Member | Request connection with a trainer. |
 | `/api/connections/` | GET | Authenticated | List current user's connections. |
-| `/api/select-trainers/` | POST | Corps Member | Select trainers during onboarding. |
 | `/api/notifications/` | GET | Authenticated | List current user's notifications. |
 | `/api/notifications/<id>/read/` | POST | Authenticated | Mark a notification as read. |
 | `/api/submit-complaint/` | POST | Authenticated | Submit a complaint to the DUNIS admin. |
@@ -278,25 +281,20 @@ The Django admin `ProfileAdmin` uses dynamic `get_fieldsets()` to show role-spec
 
 ## Access Rules
 
-- Login accepts email and password only.
-- Public signup creates corps member accounts with step-by-step registration including Nigerian state and LGA dropdowns.
-- Trainers can self-register at `/trainer-signup` but require admin authorization before accessing most features.
-- SAED admin users can create trainer accounts.
-- SAED admin users can authorize/deauthorize self-registered trainers from the user management screen.
-- SAED admin users cannot create another admin account through the API.
-- SAED admin users cannot deactivate their own account or change their own role through the API.
-- DUNIS admin users can view and manage payments and fast track access.
-- Trainers and SAED admins can manage programs and applications.
-- Only SAED admins can create new programs. Trainers can update programs they are assigned to and review their applications.
-- Trainers and SAED admins cannot apply to programs or submit applications.
-- Trainers and SAED admins can list all submitted student applications through `/api/manage/applications/`.
-- Trainer accounts are auto-restored to the expected state by the `seed_saed` management command.
-- Corps members can apply to programs, view their own applications, connect with trainers, and submit complaints.
-- Unauthorized trainers see a "Account Pending Activation" page with payment status and a "Pay Authorization Fee" button.
-- Corps members can select trainers during onboarding or later from the Trainers tab.
-- Trainers can create courses and upload fast track videos (if authorized by admin).
+- Login requires verified email and password. Unverified accounts cannot log in and are prompted to complete email verification.
+- All signups (Corps Member, Trainer, SAED Admin, Dunis Admin) dispatch a 6-digit OTP verification code to the registered email address.
+- Verification via `/api/auth/verify-code/` automatically validates the code, activates the verified state, logs in the session, and returns the user payload.
+- Trainers self-register at `/trainer-signup` (or `/signup`) and require admin authorization and payment verification for protected trainer features.
+- Admin user creation via `POST /api/manage/users/` is disabled (405). Admins register via `/api/auth/admin-signup/` providing the configured `ADMIN_SIGNUP_SECRET`.
+- SAED admin users cannot deactivate accounts or change account roles (returns 403). Only DUNIS admins can perform account activation/deactivation.
+- SAED admin users cannot create courses (`POST /api/manage/programs/` returns 403 Forbidden).
+- SAED admin users cannot edit courses (`PATCH /api/manage/programs/<id>/` returns 403 Forbidden).
+- SAED admin users can view courses and restrict/unrestrict courses for moderation purposes.
+- DUNIS admin users can create and edit courses, manage user activation, view and verify trainer payments, and manage fast track access.
+- Trainers can create and manage their own courses via `/api/manage/courses/` and `/api/manage/programs/`.
+- Free enrollment verifies that course price is 0 or less on the server side to prevent client tampering.
+- Paystack verification enforces TLS 1.2+ certificate validation and single-use payment reference tracking.
 - Notifications are sent for program restrictions, connection requests, and admin updates.
-- Non-admin users do not see admin-update notifications.
 
 ## CSRF Notes
 

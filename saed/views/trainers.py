@@ -106,45 +106,6 @@ class TrainerDetailView(APIView):
                             status=status.HTTP_404_NOT_FOUND)
 
 
-class SelectTrainersView(APIView):
-    permission_classes = [HasRole("corps_member")]
-
-    def post(self, request):
-        data = request.data
-        trainer_ids = data.get("trainerIds", [])
-        if not trainer_ids:
-            return Response({"error": "Select at least one trainer."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        try:
-            with transaction.atomic():
-                created_count = 0
-                for trainer_id in trainer_ids:
-                    try:
-                        trainer = User.objects.select_related("profile").get(
-                            id=trainer_id, is_active=True, profile__role="trainer", profile__is_authorized=True
-                        )
-                    except User.DoesNotExist:
-                        continue
-                    _, created = Connection.objects.get_or_create(
-                        corps_member=request.user,
-                        trainer=trainer,
-                        defaults={"status": "active"},
-                    )
-                    if created:
-                        created_count += 1
-                        _notify_user(trainer, "New Connection Request",
-                                     f"{request.user.get_full_name()} wants to connect with you.",
-                                     reason="connection_request",
-                                     created_by_role="corps_member")
-                request.user.profile.has_selected_trainers = True
-                request.user.profile.save(update_fields=["has_selected_trainers"])
-            return Response({"ok": True, "connected": created_count})
-        except Exception as exc:
-            _log_error("Select trainers error", exc=exc)
-            return Response({"error": "Failed to select trainers."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
 class MyTrainersView(APIView):
     permission_classes = [HasRole("corps_member")]
 

@@ -60,15 +60,17 @@ All routes are under `/api/`. Full list in [documentation.md](documentation.md).
 
 | Endpoint | Method | Access | Purpose |
 |----------|--------|--------|---------|
-| `/api/auth/login/` | POST | Public | Login |
-| `/api/auth/signup/` | POST | Public | Corps member registration |
-| `/api/auth/trainer-signup/` | POST | Public | Trainer registration |
-| `/api/auth/validate-signup/` | POST | Public | Check email/username/phone availability |
+| `/api/auth/login/` | POST | Public | Login (requires verified email) |
+| `/api/auth/signup/` | POST | Public | Corps member registration (sends 6-digit OTP) |
+| `/api/auth/trainer-signup/` | POST | Public | Trainer registration (sends 6-digit OTP) |
+| `/api/auth/admin-signup/` | POST | Secret | Admin registration (requires secret, sends 6-digit OTP) |
+| `/api/auth/send-code/` | POST | Public | Send/resend 6-digit email OTP |
+| `/api/auth/verify-code/` | POST | Public | Verify 6-digit email OTP & auto-login |
 | `/api/programs/` | GET | Public | List active programs |
 | `/api/applications/` | GET | Corps Member | My applications |
-| `/api/manage/programs/` | GET/POST | Admin/Trainer | Manage programs |
-| `/api/manage/applications/` | GET | Admin/Trainer | Review applications |
-| `/api/manage/users/` | GET/POST | Admin | User management |
+| `/api/manage/programs/` | GET/POST/PATCH | Dunis/Trainer | Manage programs (SAED admin: restrict/unrestrict only) |
+| `/api/manage/applications/` | GET/PATCH | Admin/Trainer | Review applications |
+| `/api/manage/users/` | GET/PATCH | Admin | User management (DUNIS handles activation) |
 | `/api/trainers/` | GET | Authenticated | Available trainers |
 | `/api/courses/` | GET | Authenticated | Active courses |
 | `/api/notifications/` | GET | Authenticated | Notifications |

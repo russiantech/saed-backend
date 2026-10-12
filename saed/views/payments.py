@@ -390,7 +390,7 @@ class CoursePayInitializeView(APIView):
                                 status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             amount_kobo = int(float(course.price) * 100)
-            callback_url = f"{getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3002').rstrip('/')}/app/payment/verify?reference={reference}"
+            callback_url = f"{getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3002').rstrip('/')}/app/payment/callback?reference={reference}&type=course"
 
             body = _paystack_request("POST", "/transaction/initialize", data={
                 "email": request.user.email, "amount": amount_kobo,

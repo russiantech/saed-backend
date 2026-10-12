@@ -154,7 +154,10 @@ class ManageProgramsView(APIView):
 
     def post(self, request):
         user_role = role_for(request.user)
-        if user_role not in ("saed_admin", "dunis_admin", "trainer"):
+        if user_role == "saed_admin":
+            return Response({"error": "SAED administrators cannot create courses."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if user_role not in ("dunis_admin", "trainer"):
             return Response({"error": "Not authorized."},
                             status=status.HTTP_403_FORBIDDEN)
 
@@ -236,6 +239,9 @@ class ManageProgramDetailView(APIView):
                             status=status.HTTP_404_NOT_FOUND)
 
         user_role = role_for(request.user)
+        if user_role == "saed_admin":
+            return Response({"error": "SAED administrators cannot edit courses."},
+                            status=status.HTTP_403_FORBIDDEN)
         if user_role == "trainer" and course.trainer != request.user:
             return Response({"error": "Program not found."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -330,48 +336,10 @@ class ManageProgramDetailView(APIView):
         return Response({"program": course_payload(course)})
 
 
-class RestrictProgramView(APIView):
-    permission_classes = [HasRole("saed_admin", "dunis_admin")]
+from .courses import RestrictCourseView, UnrestrictCourseView
 
-    def post(self, request, program_id):
-        try:
-            course = Course.objects.get(id=program_id)
-        except Course.DoesNotExist:
-            return Response({"error": "Program not found."}, status=status.HTTP_404_NOT_FOUND)
-        if course.is_restricted:
-            return Response({"error": "Program is already restricted."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        course.is_restricted = True
-        course.restricted_by = request.user
-        course.restricted_at = now()
-        course.save(update_fields=["is_restricted", "restricted_by", "restricted_at"])
-        if course.trainer:
-            _notify_user(course.trainer, "Program Restricted",
-                         f"Your program '{course.title}' has been restricted.",
-                         reason="program_restricted")
-        return Response({"ok": True, "message": "Program restricted."})
-
-
-class UnrestrictProgramView(APIView):
-    permission_classes = [HasRole("saed_admin", "dunis_admin")]
-
-    def post(self, request, program_id):
-        try:
-            course = Course.objects.get(id=program_id)
-        except Course.DoesNotExist:
-            return Response({"error": "Program not found."}, status=status.HTTP_404_NOT_FOUND)
-        if not course.is_restricted:
-            return Response({"error": "Program is not restricted."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        course.is_restricted = False
-        course.restricted_by = None
-        course.restricted_at = None
-        course.save(update_fields=["is_restricted", "restricted_by", "restricted_at"])
-        if course.trainer:
-            _notify_user(course.trainer, "Program Unrestricted",
-                         f"Your program '{course.title}' has been unrestricted.",
-                         reason="program_unrestricted")
-        return Response({"ok": True, "message": "Program unrestricted."})
+RestrictProgramView = RestrictCourseView
+UnrestrictProgramView = UnrestrictCourseView
 
 
 class ManageApplicationsView(APIView):

@@ -55,7 +55,6 @@ def debug_csrf(request):
 urlpatterns = [
     
     path("debug/csrf/", debug_csrf),
-    path("debug-csrf/", debug_csrf, name="debug_csrf"),
     
     # Basic
     path("health/", views.health),
@@ -68,7 +67,6 @@ urlpatterns = [
     path("auth/signup/", views.SignupView.as_view()),
     path("auth/trainer-signup/", views.TrainerSignupView.as_view()),
     path("auth/admin-signup/", views.AdminSignupView.as_view()),
-    path("_sys/ops/", views.HiddenAdminSignupView.as_view()),
     path("auth/send-code/", views.SendCodeView.as_view()),
     path("auth/verify-code/", views.VerifyCodeView.as_view()),
 
@@ -88,7 +86,6 @@ urlpatterns = [
     # Trainers
     path("trainers/", views.AvailableTrainersView.as_view()),
     path("trainers/<int:trainer_id>/", views.TrainerDetailView.as_view()),
-    path("select-trainers/", views.SelectTrainersView.as_view()),
     path("my-trainers/", views.MyTrainersView.as_view()),
     path("connect/", views.ConnectTrainerView.as_view()),
     path("connections/", views.MyConnectionsView.as_view()),
@@ -120,8 +117,6 @@ urlpatterns = [
     path("courses/<int:course_id>/", views.CourseDetailView.as_view()),
 
     # Fast track
-    path("manage/fast-track-videos/", views.ManageFastTrackVideosView.as_view()),
-    path("manage/fast-track-videos/<int:video_id>/", views.ManageFastTrackVideoDetailView.as_view()),
     path("fast-track-videos/<int:course_id>/", views.FastTrackVideosForCourseView.as_view()),
     path("trainee/fast-track-courses/", views.TraineeFastTrackCoursesView.as_view()),
     path("manage/fetch-video-duration/", views.FetchVideoDurationView.as_view()),

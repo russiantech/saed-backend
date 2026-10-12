@@ -157,9 +157,10 @@ class AdminCoursesView(APIView):
 class RestrictCourseView(APIView):
     permission_classes = [HasRole("saed_admin", "dunis_admin")]
 
-    def post(self, request, course_id):
+    def post(self, request, course_id=None, program_id=None):
+        target_id = course_id if course_id is not None else program_id
         try:
-            course = Course.objects.get(id=course_id)
+            course = Course.objects.get(id=target_id)
         except Course.DoesNotExist:
             return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
         if course.is_restricted:
@@ -179,9 +180,10 @@ class RestrictCourseView(APIView):
 class UnrestrictCourseView(APIView):
     permission_classes = [HasRole("saed_admin", "dunis_admin")]
 
-    def post(self, request, course_id):
+    def post(self, request, course_id=None, program_id=None):
+        target_id = course_id if course_id is not None else program_id
         try:
-            course = Course.objects.get(id=course_id)
+            course = Course.objects.get(id=target_id)
         except Course.DoesNotExist:
             return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
         if not course.is_restricted:
