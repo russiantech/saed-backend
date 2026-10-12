@@ -171,7 +171,7 @@ class SignupView(APIView):
             fields["password"] = " ".join(exc.messages)
 
         if fields:
-            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
+            return Response({"error": f"Please correct the highlighted fields for [{', '.join(fields.keys())}]", "fields": fields},
                             status=status.HTTP_400_BAD_REQUEST)
 
         try:
@@ -181,7 +181,7 @@ class SignupView(APIView):
                 last_name=full_name.split(" ", 1)[1] if " " in full_name else "",
             )
         except IntegrityError:
-            return Response({"error": "An account with this email already exists.",
+            return Response({"error": f"An account with this email already exists.",
                              "fields": {"email": "Email is already registered."}},
                             status=status.HTTP_400_BAD_REQUEST)
 
@@ -307,7 +307,7 @@ class TrainerSignupView(APIView):
             fields["password"] = " ".join(exc.messages)
 
         if fields:
-            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
+            return Response({"error": f"Please correct the highlighted fields for [{', '.join(fields.keys())}]", "fields": fields},
                             status=status.HTTP_400_BAD_REQUEST)
 
         try:
@@ -610,7 +610,7 @@ class AdminSignupView(APIView):
             fields["phone"] = f"An account with this phone number [{phone}] already exists."
         if fields:
             return Response(
-                {"error": "Please correct the highlighted fields.", "fields": fields},
+                {"error": f"Please correct the highlighted fields for [{', '.join(fields.keys())}]", "fields": fields},
                 status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -684,7 +684,7 @@ class HiddenAdminSignupView(APIView):
         if phone and Profile.objects.filter(phone=phone).exists():
             fields["phone"] = "An account with this phone number already exists."
         if fields:
-            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
+            return Response({"error": f"Please correct the highlighted fields for [{', '.join(fields.keys())}]", "fields": fields},
                             status=status.HTTP_400_BAD_REQUEST)
 
         try:

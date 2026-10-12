@@ -64,7 +64,7 @@ class ManageCoursesView(APIView):
             fields["maxStudents"] = "Enter a valid number."
 
         if fields:
-            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
+            return Response({"error": f"Please correct the highlighted fields for [{', '.join(fields.keys())}]", "fields": fields},
                             status=status.HTTP_400_BAD_REQUEST)
 
         try:

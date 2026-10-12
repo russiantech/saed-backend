@@ -157,7 +157,7 @@ class ManageProgramsView(APIView):
                             status=status.HTTP_403_FORBIDDEN)
         program, fields = _apply_program_data(None, request.data)
         if fields:
-            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
+            return Response({"error": f"Please correct the highlighted fields for [{', '.join(fields.keys())}]", "fields": fields},
                             status=status.HTTP_400_BAD_REQUEST)
         return Response({"program": program_payload(program)}, status=status.HTTP_201_CREATED)
 
@@ -172,7 +172,7 @@ class ManageProgramDetailView(APIView):
             return Response({"error": "Program not found."}, status=status.HTTP_404_NOT_FOUND)
         program, fields = _apply_program_data(program, request.data)
         if fields:
-            return Response({"error": "Please correct the highlighted fields.", "fields": fields},
+            return Response({"error": f"Please correct the highlighted fields for [{', '.join(fields.keys())}]", "fields": fields},
                             status=status.HTTP_400_BAD_REQUEST)
         return Response({"program": program_payload(program)})
 
