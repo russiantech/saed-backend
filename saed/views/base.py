@@ -76,6 +76,28 @@ def _send_email_async(
     thread.start()
     return thread
 
+def _send_email(subject, message, recipient_list, from_email=None, html_message=None):
+    """Synchronous send. Returns True only if SMTP accepted the message."""
+    try:
+        sent = send_mail(
+            subject=subject,
+            message=message,
+            from_email=from_email or getattr(
+                django_settings, "DEFAULT_FROM_EMAIL", "noreply@saed-ims.ng"
+            ),
+            recipient_list=recipient_list,
+            fail_silently=False,
+            html_message=html_message,
+        )
+        if sent:
+            _log_info(f"Email sent to {recipient_list}", extra={"subject": subject})
+            return True
+        _log_error(f"send_mail returned 0 for {recipient_list}")
+    except Exception as exc:
+        _log_error(f"Failed to send email to {recipient_list}", exc=exc,
+                   extra={"subject": subject})
+    return False
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # NOTIFICATION HELPERS

@@ -1,6 +1,7 @@
 """
 Authentication views: login, logout, signup, trainer signup, email verify, password reset.
 """
+# saed-backend/saed/views/auth.py
 
 import json
 import random
@@ -20,7 +21,7 @@ from rest_framework import status
 
 from ..models import Profile
 from .base import (
-    _log_error, _log_info, _log_warning, _send_email_async,
+    _log_error, _log_info, _log_warning, _send_email_async, _send_email,
     _notify_admins, _notify_admins_email, _notify_user,
     read_json, clean_email, user_payload, _safe_int, validation_error,
     HasRole,
@@ -613,49 +614,98 @@ class SendCodeView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        
         email = clean_email(request.data.get("email", ""))
         if not email:
             return Response({"error": "Enter a valid email address.",
                              "fields": {"email": "Email is required."}},
                             status=status.HTTP_400_BAD_REQUEST)
+        # v1
+        # user = User.objects.filter(email__iexact=email, is_active=True).first()
+        # if not user:
+        #     return Response({"ok": True, "message": "If that email exists, a code was sent."})
 
+        # profile = Profile.objects.filter(user=user).first()
+        # if not profile:
+        #     return Response({"ok": True, "message": "If that email exists, a code was sent."})
+
+        # if profile.is_email_verified:
+        #     return Response({"ok": True, "message": "Email is already verified."})
+
+        # code = "".join(random.choices(string.digits, k=6))
+        # profile.email_verification_code = code
+        # profile.email_verification_code_at = now()
+        # profile.save(update_fields=["email_verification_code", "email_verification_code_at"])
+
+        # _send_email_async(
+        #     subject="SAED IMS - Your Verification Code",
+        #     message=f"Your verification code is: {code}",
+        #     recipient_list=[user.email],
+        #     html_message=(
+        #         f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+        #         f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
+        #         f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
+        #         f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+        #         f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
+        #         f'<p>Hello <strong>{user.get_full_name() or user.username}</strong>,</p>'
+        #         f'<p>Your verification code is:</p>'
+        #         f'<p style="text-align:center;margin:30px 0;"><span style="font-size:32px;letter-spacing:8px;font-weight:bold;color:#1a5f2a;">{code}</span></p>'
+        #         f'<p style="color:#666;font-size:13px;">This code expires in 10 minutes. If you did not create this account, ignore this email.</p></div>'
+        #         f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
+        #     ),
+        # )
+
+        # _log_info(f"Verification code sent to {email}")
+        # return Response({"ok": True, "message": "Code sent to your email."})
+
+        # v2: send code only if email exists, but always return success message
         user = User.objects.filter(email__iexact=email, is_active=True).first()
         if not user:
+            _log_warning(f"send-code: no active user for {email}")
             return Response({"ok": True, "message": "If that email exists, a code was sent."})
 
         profile = Profile.objects.filter(user=user).first()
         if not profile:
+            _log_warning(f"send-code: user {user.id} has no profile")
             return Response({"ok": True, "message": "If that email exists, a code was sent."})
 
         if profile.is_email_verified:
-            return Response({"ok": True, "message": "Email is already verified."})
+            _log_info(f"send-code: user {user.id} already verified, no code sent")
+            return Response({"ok": True, "alreadyVerified": True,
+                             "message": "Email is already verified. You can log in."})
 
         code = "".join(random.choices(string.digits, k=6))
         profile.email_verification_code = code
         profile.email_verification_code_at = now()
         profile.save(update_fields=["email_verification_code", "email_verification_code_at"])
 
-        _send_email_async(
+        ok = _send_email(
             subject="SAED IMS - Your Verification Code",
             message=f"Your verification code is: {code}",
             recipient_list=[user.email],
+            # html_message=( ...keep your existing HTML exactly as is... ),
             html_message=(
-                f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
-                f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
-                f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
-                f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
-                f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
-                f'<p>Hello <strong>{user.get_full_name() or user.username}</strong>,</p>'
-                f'<p>Your verification code is:</p>'
-                f'<p style="text-align:center;margin:30px 0;"><span style="font-size:32px;letter-spacing:8px;font-weight:bold;color:#1a5f2a;">{code}</span></p>'
-                f'<p style="color:#666;font-size:13px;">This code expires in 10 minutes. If you did not create this account, ignore this email.</p></div>'
-                f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
+                            f'<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">'
+                            f'<div style="background:#1a5f2a;padding:20px;border-radius:8px 8px 0 0;">'
+                            f'<h1 style="color:#fff;margin:0;font-size:22px;">NYSC SAED IMS</h1></div>'
+                            f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
+                            f'<h2 style="color:#1a5f2a;margin-top:0;">Email Verification</h2>'
+                            f'<p>Hello <strong>{user.get_full_name() or user.username}</strong>,</p>'
+                            f'<p>Your verification code is:</p>'
+                            f'<p style="text-align:center;margin:30px 0;"><span style="font-size:32px;letter-spacing:8px;font-weight:bold;color:#1a5f2a;">{code}</span></p>'
+                            f'<p style="color:#666;font-size:13px;">This code expires in 10 minutes. If you did not create this account, ignore this email.</p></div>'
+                            f'<div style="text-align:center;padding:15px;color:#999;font-size:12px;">&copy; 2026 NYSC SAED IMS.</div></div>'
             ),
         )
+    
+        if not ok:
+            return Response(
+                {"error": "We couldn't send the verification email. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         _log_info(f"Verification code sent to {email}")
         return Response({"ok": True, "message": "Code sent to your email."})
-
 
 class VerifyCodeView(APIView):
     """Verify the 6-digit code and log the user in."""
