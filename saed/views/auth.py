@@ -507,9 +507,13 @@ class AdminSignupView(APIView):
         try:
             validate_password(password)
         except ValidationError as exc:
-            return Response({"error": "Choose a stronger password.",
-                             "fields": {"password": " ".join(exc.messages)}},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                "error": "Choose a stronger password.",
+                "fields": {
+                    "password": " ".join(exc.messages)}
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
         try:
             with transaction.atomic():
@@ -745,9 +749,10 @@ class VerifyCodeView(APIView):
         if profile.email_verification_code_at:
             elapsed = (now() - profile.email_verification_code_at).total_seconds()
             if elapsed > 600:
-                return Response({"error": "Code has expired.",
-                                 "fields": {"code": "Code has expired. Please request a new one."}},
-                                status=status.HTTP_400_BAD_REQUEST)
+                return Response({
+                    "error": "Code has expired.",
+                    "fields": {"code": "Code has expired. Please request a new one."}},
+                    status=status.HTTP_400_BAD_REQUEST)
 
         profile.is_email_verified = True
         profile.is_verified = True
