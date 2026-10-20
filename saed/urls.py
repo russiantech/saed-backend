@@ -67,6 +67,7 @@ urlpatterns = [
     path("auth/signup/", views.SignupView.as_view()),
     path("auth/trainer-signup/", views.TrainerSignupView.as_view()),
     path("auth/admin-signup/", views.AdminSignupView.as_view()),
+    path("auth/resend-admin-key/", views.AdminResendKeyView.as_view()),
     path("auth/send-code/", views.SendCodeView.as_view()),
     path("auth/verify-code/", views.VerifyCodeView.as_view()),
 
@@ -97,6 +98,8 @@ urlpatterns = [
     # Admin - Users
     path("manage/users/", views.ManageUsersView.as_view()),
     path("manage/users/<int:user_id>/", views.ManageUserDetailView.as_view()),
+    path("manage/admin-invitations/", views.AdminInviteCreateView.as_view()),
+    path("manage/admin-invitations/<int:invitation_id>/", views.AdminInviteRevokeView.as_view()),
 
     # Admin - Programs
     path("manage/programs/", views.ManageProgramsView.as_view()),
@@ -138,7 +141,9 @@ urlpatterns = [
     path("courses/pay/", views.CoursePayInitializeView.as_view()),
     path("courses/pay/verify/", views.CoursePayVerifyView.as_view()),
     path("courses/<int:course_id>/enrollment-status/", views.CourseEnrollmentStatusView.as_view()),
+    path("courses/<int:course_id>/request-refund/", views.CourseRequestRefundView.as_view()),
     path("courses/<int:course_id>/progress/", views.CourseProgressView.as_view()),
+    path("courses/<int:course_id>/certificate/", views.CourseCertificateView.as_view()),
     path("courses/<int:course_id>/lessons/<int:lesson_id>/complete/", views.LessonCompleteView.as_view()),
     path("webhooks/paystack/", views.paystack_webhook),
 

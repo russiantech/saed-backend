@@ -76,6 +76,15 @@ class ManageCoursesView(APIView):
             return Response({"error": "Please correct the highlighted fields.", "fields": fields},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        has_fast_track = bool(data.get("hasFastTrack", False))
+        if has_fast_track:
+            profile = getattr(request.user, "profile", None)
+            if not profile or not profile.can_upload_fast_track:
+                return Response(
+                    {"error": "Fast Track is not enabled for your account. Please complete Fast Track payment or request authorization from Dunis Admin."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         try:
             with transaction.atomic():
                 course = Course.objects.create(
@@ -88,7 +97,7 @@ class ManageCoursesView(APIView):
                     start_date=start_date,
                     end_date=end_date,
                     max_students=max_students,
-                    has_fast_track=bool(data.get("hasFastTrack", False)),
+                    has_fast_track=has_fast_track,
                 )
             return Response({"course": course_payload(course)}, status=status.HTTP_201_CREATED)
         except Exception as exc:
@@ -107,6 +116,14 @@ class ManageCourseDetailView(APIView):
             return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
 
         data = _resolve_course_dates(dict(request.data))
+        if "hasFastTrack" in data and bool(data["hasFastTrack"]):
+            profile = getattr(request.user, "profile", None)
+            if not profile or not profile.can_upload_fast_track:
+                return Response(
+                    {"error": "Fast Track is not enabled for your account. Please complete Fast Track payment or request authorization from Dunis Admin."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         for field in ["title", "description", "category", "price", "durationWeeks", "startDate", "endDate", "maxStudents", "hasFastTrack", "isActive"]:
             if field in data:
                 model_field = {
@@ -264,10 +281,12 @@ class CourseProgressView(APIView):
             student=request.user, lesson__module__course=course
         ).count()
         percentage = round(completed / total * 100) if total else 0
+        is_completed = bool(total > 0 and completed >= total)
         return Response({
             "totalLessons": total,
             "completedLessons": completed,
             "percentage": percentage,
+            "isCompleted": is_completed,
         })
 
 
@@ -294,3 +313,62 @@ class LessonCompleteView(APIView):
             "completed": True,
             "alreadyCompleted": not created,
         })
+
+
+class CourseCertificateView(APIView):
+    """
+    Returns certificate metadata for an enrolled student who has completed
+    all lessons (100% progress) in the course.
+    """
+    permission_classes = [IsAuthenticatedAPI]
+
+    def get(self, request, course_id):
+        try:
+            course = Course.objects.select_related("trainer", "trainer__profile").get(id=course_id)
+        except Course.DoesNotExist:
+            return Response({"error": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 1. Must have confirmed enrollment
+        enrollment = CourseEnrollment.objects.filter(
+            student=request.user, course=course, status="confirmed"
+        ).first()
+        if not enrollment:
+            return Response({"error": "You must be actively enrolled in this course to claim a certificate."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # 2. Must have completed all lessons
+        total = Lesson.objects.filter(module__course=course, module__is_active=True).count()
+        completed = LessonProgress.objects.filter(
+            student=request.user, lesson__module__course=course
+        ).count()
+        if total == 0 or completed < total:
+            return Response({
+                "error": "Course is not yet completed. Complete all course lessons to receive your certificate.",
+                "totalLessons": total,
+                "completedLessons": completed,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Generate certificate data
+        student_profile = getattr(request.user, "profile", None)
+        trainer_profile = getattr(course.trainer, "profile", None) if course.trainer else None
+
+        # Deterministic serial: NYSC-SAED-<course_id:04d>-<student_id:05d>-<enrollment_id:04d>
+        serial = f"NYSC-SAED-{course.id:04d}-{request.user.id:05d}-{enrollment.id:04d}"
+
+        issue_date = enrollment.confirmed_at or enrollment.enrolled_at or now()
+
+        certificate = {
+            "certificateNumber": serial,
+            "studentName": request.user.get_full_name() or request.user.username or request.user.email,
+            "stateCode": student_profile.nysc_state_code if student_profile else "",
+            "stateOfDeployment": student_profile.state_of_deployment if student_profile else "",
+            "lgaOfDeployment": student_profile.lga_of_deployment if student_profile else "",
+            "courseTitle": course.title,
+            "courseCategory": course.category,
+            "durationWeeks": course.duration_weeks,
+            "trainerName": course.trainer.get_full_name() if course.trainer else "",
+            "trainerCompany": trainer_profile.company_name if trainer_profile else "",
+            "issuedAt": issue_date.strftime("%B %d, %Y"),
+            "issuedTimestamp": issue_date.isoformat(),
+        }
+        return Response({"certificate": certificate})

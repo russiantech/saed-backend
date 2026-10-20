@@ -205,6 +205,15 @@ class ManageProgramsView(APIView):
                                      "fields": {"trainerId": "Trainer not found."}},
                                     status=status.HTTP_400_BAD_REQUEST)
 
+        has_fast_track = bool(data.get("hasFastTrack", False))
+        if has_fast_track:
+            target_profile = getattr(trainer, "profile", None)
+            if not target_profile or not target_profile.can_upload_fast_track:
+                return Response(
+                    {"error": "Fast Track is not enabled for this trainer account."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         try:
             from django.db import transaction
             with transaction.atomic():
@@ -219,7 +228,7 @@ class ManageProgramsView(APIView):
                     start_date=start_date,
                     end_date=end_date,
                     max_students=max_students,
-                    has_fast_track=bool(data.get("hasFastTrack", False)),
+                    has_fast_track=has_fast_track,
                 )
             return Response({"program": course_payload(course)}, status=status.HTTP_201_CREATED)
         except Exception as exc:
@@ -298,6 +307,15 @@ class ManageProgramDetailView(APIView):
         if fields:
             return Response({"error": "Please correct the highlighted fields.", "fields": fields},
                             status=status.HTTP_400_BAD_REQUEST)
+
+        if "hasFastTrack" in data and bool(data["hasFastTrack"]):
+            target_trainer = course.trainer or request.user
+            target_profile = getattr(target_trainer, "profile", None)
+            if not target_profile or not target_profile.can_upload_fast_track:
+                return Response(
+                    {"error": "Fast Track is not enabled for this trainer account."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         field_map = {
             "title": "title",

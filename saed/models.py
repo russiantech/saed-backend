@@ -51,8 +51,11 @@ class Profile(models.Model):
     email_verification_token = models.CharField(max_length=64, blank=True)
     email_verification_code = models.CharField(max_length=6, blank=True)
     email_verification_code_at = models.DateTimeField(null=True, blank=True)
+    email_verification_attempts = models.PositiveSmallIntegerField(default=0)
     password_reset_token = models.CharField(max_length=64, blank=True)
     password_reset_code = models.CharField(max_length=6, blank=True)
+    password_reset_code_created_at = models.DateTimeField(null=True, blank=True)
+    password_reset_attempts = models.PositiveSmallIntegerField(default=0)
 
     specialization = models.CharField(max_length=120, blank=True, choices=SKILL_AREAS)
     partner_lgas = models.JSONField(default=list, blank=True)
@@ -311,3 +314,43 @@ class Complaint(models.Model):
 
     def __str__(self):
         return f"{self.subject} ({self.user.username})"
+
+
+class AdminInvitation(models.Model):
+    ROLE_CHOICES = [
+        ("saed_admin", "SAED Admin"),
+        ("dunis_admin", "DUNIS Admin"),
+    ]
+
+    email = models.EmailField(db_index=True)
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="saed_admin")
+    secret_key = models.CharField(max_length=64, unique=True, db_index=True)
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="sent_admin_invitations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+    used_at = models.DateTimeField(null=True, blank=True)
+    used_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="used_admin_invitations",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    @property
+    def is_expired(self):
+        from django.utils.timezone import now
+        return now() > self.expires_at
+
+    def __str__(self):
+        status_str = "used" if self.is_used else ("expired" if self.is_expired else "active")
+        return f"Invite for {self.email} ({self.role}) - {status_str}"

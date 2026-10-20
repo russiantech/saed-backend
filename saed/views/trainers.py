@@ -5,6 +5,7 @@ Trainer and connection views.
 from django.conf import settings as django_settings
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.utils.html import escape
 from django.utils.timezone import now
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -197,6 +198,8 @@ class ConnectTrainerView(APIView):
                                 status=status.HTTP_400_BAD_REQUEST)
 
             cm_name = request.user.get_full_name() or request.user.email
+            safe_cm_name = escape(cm_name)
+            safe_cm_email = escape(request.user.email)
             _notify_user(trainer, "New Connection Request",
                          f"{cm_name} wants to connect with you. Please review and approve.",
                          reason="connection_request", created_by_role="corps_member")
@@ -210,7 +213,7 @@ class ConnectTrainerView(APIView):
                     title="New Connection Request",
                     recipient_name=trainer.get_full_name(),
                     content_html=(
-                        f'<p style="margin:0 0 12px 0;"><strong>{cm_name}</strong> ({request.user.email}) has requested to connect with you on NYSC SAED IMS.</p>'
+                        f'<p style="margin:0 0 12px 0;"><strong>{safe_cm_name}</strong> ({safe_cm_email}) has requested to connect with you on NYSC SAED IMS.</p>'
                         f'<p style="margin:0;">Please log into your dashboard to review and respond to this request.</p>'
                     ),
                     action_text="Review Connection",
@@ -267,30 +270,35 @@ class ConnectionApproveView(APIView):
         try:
             connection.status = "active"
             connection.save(update_fields=["status"])
+            cm_name = connection.corps_member.get_full_name()
+            trainer_name = request.user.get_full_name()
+            safe_cm_name = escape(cm_name)
+            safe_trainer_name = escape(trainer_name)
+
             _notify_user(connection.corps_member, "Connection Approved",
-                         f"Your connection with {request.user.get_full_name()} has been approved!",
+                         f"Your connection with {trainer_name} has been approved!",
                          reason="connection_approved", created_by_role="trainer")
             _send_email_async(
                 subject="SAED IMS - Connection Approved!",
-                message=f"Hello {connection.corps_member.get_full_name()},\n\nYour connection has been approved!",
+                message=f"Hello {cm_name},\n\nYour connection has been approved!",
                 recipient_list=[connection.corps_member.email],
                 from_email=request.user.email,
                 html_message=format_notification_email_html(
                     title="Connection Approved!",
-                    recipient_name=connection.corps_member.get_full_name(),
+                    recipient_name=cm_name,
                     content_html=(
-                        f'<p style="margin:0 0 12px 0;">Great news! Your connection request with <strong>{request.user.get_full_name()}</strong> has been approved.</p>'
+                        f'<p style="margin:0 0 12px 0;">Great news! Your connection request with <strong>{safe_trainer_name}</strong> has been approved.</p>'
                         f'<p style="margin:0;">You can now communicate directly and access courses under this trainer.</p>'
                     ),
                     action_text="View Trainer",
                 ),
             )
             _notify_admins_email(
-                subject=f"Connection Approved - {connection.corps_member.get_full_name()} -> {request.user.get_full_name()}",
+                subject=f"Connection Approved - {cm_name} -> {trainer_name}",
                 message=(
                     f"A connection has been approved.\n"
-                    f"Corps Member: {connection.corps_member.get_full_name()}\n"
-                    f"Trainer: {request.user.get_full_name()}"
+                    f"Corps Member: {cm_name}\n"
+                    f"Trainer: {trainer_name}"
                 ),
                 email_type="trainer",
                 from_email=request.user.email,
@@ -300,8 +308,8 @@ class ConnectionApproveView(APIView):
                     content_html=(
                         f'<p style="margin:0 0 16px 0;">A connection has been approved:</p>'
                         f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px;border-collapse:collapse;margin:16px 0;">'
-                        f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:130px;">Corps Member</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{connection.corps_member.get_full_name()}</td></tr>'
-                        f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Trainer</td><td style="padding:10px 0;color:#182e21;">{request.user.get_full_name()}</td></tr>'
+                        f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:130px;">Corps Member</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{safe_cm_name}</td></tr>'
+                        f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Trainer</td><td style="padding:10px 0;color:#182e21;">{safe_trainer_name}</td></tr>'
                         f'</table>'
                     ),
                 ),
@@ -327,30 +335,35 @@ class ConnectionRejectView(APIView):
         try:
             connection.status = "cancelled"
             connection.save(update_fields=["status"])
+            cm_name = connection.corps_member.get_full_name()
+            trainer_name = request.user.get_full_name()
+            safe_cm_name = escape(cm_name)
+            safe_trainer_name = escape(trainer_name)
+
             _notify_user(connection.corps_member, "Connection Declined",
-                         f"Your connection request with {request.user.get_full_name()} was declined.",
+                         f"Your connection request with {trainer_name} was declined.",
                          reason="connection_declined", created_by_role="trainer")
             _send_email_async(
                 subject="SAED IMS - Connection Declined",
-                message=f"Hello {connection.corps_member.get_full_name()},\n\nYour connection request with {request.user.get_full_name()} has been declined.",
+                message=f"Hello {cm_name},\n\nYour connection request with {trainer_name} has been declined.",
                 recipient_list=[connection.corps_member.email],
                 from_email=request.user.email,
                 html_message=format_notification_email_html(
                     title="Connection Declined",
-                    recipient_name=connection.corps_member.get_full_name(),
+                    recipient_name=cm_name,
                     content_html=(
-                        f'<p style="margin:0 0 12px 0;">Your connection request with <strong>{request.user.get_full_name()}</strong> has been declined.</p>'
+                        f'<p style="margin:0 0 12px 0;">Your connection request with <strong>{safe_trainer_name}</strong> has been declined.</p>'
                         f'<p style="margin:0;">You can browse other available trainers on the platform from your dashboard.</p>'
                     ),
                     action_text="Browse Trainers",
                 ),
             )
             _notify_admins_email(
-                subject=f"Connection Declined - {connection.corps_member.get_full_name()} by {request.user.get_full_name()}",
+                subject=f"Connection Declined - {cm_name} by {trainer_name}",
                 message=(
                     f"A connection request has been declined.\n"
-                    f"Corps Member: {connection.corps_member.get_full_name()}\n"
-                    f"Trainer: {request.user.get_full_name()}"
+                    f"Corps Member: {cm_name}\n"
+                    f"Trainer: {trainer_name}"
                 ),
                 email_type="trainer",
                 from_email=request.user.email,
@@ -360,8 +373,8 @@ class ConnectionRejectView(APIView):
                     content_html=(
                         f'<p style="margin:0 0 16px 0;">A connection request was declined:</p>'
                         f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px;border-collapse:collapse;margin:16px 0;">'
-                        f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:130px;">Corps Member</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{connection.corps_member.get_full_name()}</td></tr>'
-                        f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Trainer</td><td style="padding:10px 0;color:#182e21;">{request.user.get_full_name()}</td></tr>'
+                        f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:130px;">Corps Member</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{safe_cm_name}</td></tr>'
+                        f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Trainer</td><td style="padding:10px 0;color:#182e21;">{safe_trainer_name}</td></tr>'
                         f'</table>'
                     ),
                 ),
@@ -388,10 +401,14 @@ class CorperProfileForTrainerView(APIView):
                 trainer=request.user, corps_member=corper
             ).first()
 
+            if not connection:
+                return Response({"error": "No connection exists with this corps member."},
+                                status=status.HTTP_404_NOT_FOUND)
+
             trainer_courses = Course.objects.filter(trainer=request.user, is_active=True)
             corper_data = user_payload(corper, request)
-            corper_data["connectionStatus"] = connection.status if connection else "none"
-            corper_data["connectionId"] = connection.id if connection else None
+            corper_data["connectionStatus"] = connection.status
+            corper_data["connectionId"] = connection.id
 
             corper_enrollments = CourseEnrollment.objects.filter(
                 student=corper, course__in=trainer_courses

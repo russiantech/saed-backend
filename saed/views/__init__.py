@@ -40,6 +40,7 @@ def me(request):
 # Auth views (DRF APIViews)
 from .auth import (
     LoginView, LogoutView, SignupView, TrainerSignupView, AdminSignupView,
+    AdminInviteCreateView, AdminInviteListView, AdminInviteRevokeView, AdminResendKeyView,
     PasswordResetRequestView, VerifyResetCodeView, ResetPasswordView,
     SendCodeView, VerifyCodeView,
 )
@@ -63,6 +64,7 @@ from .courses import (
     CourseListView, ManageCoursesView, ManageCourseDetailView,
     AdminCoursesView, RestrictCourseView, UnrestrictCourseView,
     CourseDetailView, CourseProgressView, LessonCompleteView,
+    CourseCertificateView,
 )
 
 # Trainers
@@ -78,7 +80,7 @@ from .payments import (
     PaystackInitializeView, PaystackTrainerVerifyView,
     FastTrackInitializeView, FastTrackVerifyView,
     CoursePayInitializeView, CoursePayVerifyView,
-    CourseEnrollmentStatusView,
+    CourseEnrollmentStatusView, CourseRequestRefundView,
     AdminPendingRefundsView, AdminProcessRefundView, AdminRejectRefundView,
     paystack_webhook,
 )

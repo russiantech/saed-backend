@@ -1,7 +1,9 @@
 """
 Complaint views.
 """
+import urllib.parse
 from django.contrib.auth.models import User
+from django.utils.html import escape
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -33,9 +35,16 @@ class SubmitComplaintView(APIView):
                              "fields": {"recipient": "Invalid recipient."}},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        attachment_url = data.get("attachmentUrl", "").strip()
+        if attachment_url:
+            parsed_att = urllib.parse.urlparse(attachment_url)
+            if parsed_att.scheme not in ("http", "https"):
+                return Response({"error": "Attachment URL must begin with http:// or https://",
+                                 "fields": {"attachmentUrl": "Invalid attachment URL protocol."}},
+                                status=status.HTTP_400_BAD_REQUEST)
+
         try:
             sender_name = request.user.get_full_name() or request.user.email
-            attachment_url = data.get("attachmentUrl", "").strip()
             if recipient:
                 admin_users = User.objects.filter(profile__role=recipient)
             else:
@@ -48,6 +57,12 @@ class SubmitComplaintView(APIView):
                     attachment_url=attachment_url,
                 )
             _log_info(f"Complaint distributed to {admin_users.count()} admins" + (f" (recipient={recipient})" if recipient else ""))
+
+            safe_sender = escape(str(sender_name))
+            safe_email = escape(str(request.user.email))
+            safe_subject = escape(str(subject))
+            safe_message = escape(str(message)).replace("\n", "<br>")
+            safe_attachment = escape(str(attachment_url))
 
             _notify_admins_email(
                 subject=f"New Complaint: {subject}",
@@ -66,11 +81,11 @@ class SubmitComplaintView(APIView):
                     f'<div style="background:#f9f9f9;padding:30px;border:1px solid #e0e0e0;">'
                     f'<h2 style="color:#1a5f2a;margin-top:0;">New Complaint</h2>'
                     f'<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
-                    f'<tr><td style="padding:8px;font-weight:bold;">From</td><td style="padding:8px;">{sender_name} ({request.user.email})</td></tr>'
-                    f'<tr><td style="padding:8px;font-weight:bold;">Subject</td><td style="padding:8px;">{subject}</td></tr>'
-                    + (f'<tr><td style="padding:8px;font-weight:bold;">Attachment</td><td style="padding:8px;"><a href="{attachment_url}">View Attachment</a></td></tr>' if attachment_url else '')
+                    f'<tr><td style="padding:8px;font-weight:bold;">From</td><td style="padding:8px;">{safe_sender} ({safe_email})</td></tr>'
+                    f'<tr><td style="padding:8px;font-weight:bold;">Subject</td><td style="padding:8px;">{safe_subject}</td></tr>'
+                    + (f'<tr><td style="padding:8px;font-weight:bold;">Attachment</td><td style="padding:8px;"><a href="{safe_attachment}" target="_blank" rel="noopener noreferrer">View Attachment</a></td></tr>' if safe_attachment else '')
                     + f'</table>'
-                    f'<p style="color:#333;line-height:1.6;">{message}</p>'
+                    f'<p style="color:#333;line-height:1.6;">{safe_message}</p>'
                     f'</div></div>'
                 ),
             )

@@ -67,7 +67,10 @@ class PaystackInitializeView(APIView):
         if not profile or profile.role != "trainer":
             return Response({"error": "Only trainer accounts can make this payment."},
                             status=status.HTTP_403_FORBIDDEN)
-        if profile.has_paid and profile.is_authorized:
+        if not profile.is_authorized:
+            return Response({"error": "Your application is currently under review. You can make payment once your profile is approved."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if profile.has_paid:
             return Response({"error": "This trainer payment has already been recorded."},
                             status=status.HTTP_400_BAD_REQUEST)
         email = request.user.email
@@ -367,12 +370,14 @@ class CoursePayInitializeView(APIView):
                 return Response({"error": "You already have access to this course."},
                                 status=status.HTTP_400_BAD_REQUEST)
             if enrollment.status == "refunded":
-                enrollment.status = "confirmed"
+                enrollment.status = "pending"
                 enrollment.refund_requested = False
                 enrollment.refund_requested_at = None
                 enrollment.refund_processed = False
                 enrollment.refund_processed_at = None
                 enrollment.refund_note = ""
+            elif enrollment.status != "confirmed":
+                enrollment.status = "pending"
 
             reference = f"SAED-COURSE-{get_random_string(12).upper()}"
             enrollment.payment_reference = reference
@@ -483,11 +488,63 @@ class CourseEnrollmentStatusView(APIView):
                 "isPaid": enrollment.status == "confirmed" if enrollment else False,
                 "enrolled": enrollment is not None,
                 "status": enrollment.status if enrollment else None,
+                "refundRequested": getattr(enrollment, "refund_requested", False) if enrollment else False,
+                "refundProcessed": getattr(enrollment, "refund_processed", False) if enrollment else False,
+                "refundNote": getattr(enrollment, "refund_note", "") if enrollment else "",
             })
         except Exception as exc:
             _log_error("Enrollment status error", exc=exc)
             return Response({"error": "Failed to check enrollment."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CourseRequestRefundView(APIView):
+    """Allows an enrolled trainee to request a refund for a paid course."""
+    permission_classes = [HasRole("corps_member")]
+
+    def post(self, request, course_id):
+        reason = request.data.get("reason", "").strip()
+        if not reason:
+            return Response({"error": "Please provide a reason for the refund request."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if len(reason) > 500:
+            return Response({"error": "Reason must not exceed 500 characters."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            enrollment = CourseEnrollment.objects.select_related("course", "course__trainer").get(
+                student=request.user, course_id=course_id
+            )
+        except CourseEnrollment.DoesNotExist:
+            return Response({"error": "You do not have an active enrollment for this course."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        if enrollment.status != "confirmed":
+            return Response({"error": "Only confirmed course enrollments can be refunded."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if enrollment.refund_requested and not enrollment.refund_processed:
+            return Response({"error": "A refund request is already pending review for this course."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        enrollment.refund_requested = True
+        enrollment.refund_requested_at = now()
+        enrollment.refund_processed = False
+        enrollment.refund_note = f"Trainee Reason: {reason}"
+        enrollment.save(update_fields=[
+            "refund_requested", "refund_requested_at", "refund_processed", "refund_note"
+        ])
+
+        _notify_admins(
+            title="New Refund Request",
+            message=f"{request.user.get_full_name() or request.user.email} requested a refund for {enrollment.course.title}.",
+            reason="refund_requested",
+            created_by_role="corps_member",
+        )
+
+        return Response({
+            "ok": True,
+            "message": "Refund request submitted successfully. NYSC SAED administration will review it.",
+        })
 
 
 class AdminPendingRefundsView(APIView):

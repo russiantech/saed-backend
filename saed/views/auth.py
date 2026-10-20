@@ -2,14 +2,17 @@
 Authentication views: login, logout, signup, trainer signup, email verify, password reset.
 """
 
+import hmac
 import json
 import random
 import string
+from datetime import timedelta
 from django.conf import settings as django_settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.models import User
 from django.utils.crypto import get_random_string
+from django.utils.html import escape
 from django.utils.timezone import now
 from django.db import IntegrityError, transaction
 from django.core.exceptions import ValidationError
@@ -18,13 +21,14 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Profile
+from ..models import AdminInvitation, Profile
 from .base import (
     _log_error, _log_info, _log_warning, _send_email_async,
     _notify_admins, _notify_admins_email, _notify_user,
     format_code_email_html, format_notification_email_html,
+    generate_admin_secret_key, send_admin_invitation_email,
     read_json, clean_email, user_payload, _safe_int, validation_error,
-    HasRole,
+    HasRole, validate_uploaded_file, ALLOWED_LETTER_EXTENSIONS,
 )
 
 
@@ -32,8 +36,9 @@ def _send_verification_code_email(user, profile):
     code = "".join(random.choices(string.digits, k=6))
     profile.email_verification_code = code
     profile.email_verification_code_at = now()
+    profile.email_verification_attempts = 0
     profile.is_email_verified = False
-    profile.save(update_fields=["email_verification_code", "email_verification_code_at", "is_email_verified"])
+    profile.save(update_fields=["email_verification_code", "email_verification_code_at", "email_verification_attempts", "is_email_verified"])
 
     html_msg = format_code_email_html(
         title="Email Verification",
@@ -53,7 +58,7 @@ def _send_verification_code_email(user, profile):
         recipient_list=[user.email],
         html_message=html_msg,
     )
-    _log_info(f"Verification code sent to {user.email}: {code}")
+    _log_info(f"Verification code dispatched to {user.email}")
     return code
 
 
@@ -232,10 +237,10 @@ class SignupView(APIView):
                 content_html=(
                     f'<p style="margin:0 0 16px 0;">A new corps member has registered on the platform:</p>'
                     f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px;border-collapse:collapse;margin:16px 0;">'
-                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:120px;">Name</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{full_name}</td></tr>'
-                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Email</td><td style="padding:10px 0;color:#182e21;">{email}</td></tr>'
-                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Phone</td><td style="padding:10px 0;color:#182e21;">{data.get("phone", "").strip()}</td></tr>'
-                    f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">State Code</td><td style="padding:10px 0;color:#182e21;">{nysc_state_code}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:120px;">Name</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{escape(full_name)}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Email</td><td style="padding:10px 0;color:#182e21;">{escape(email)}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Phone</td><td style="padding:10px 0;color:#182e21;">{escape(data.get("phone", "").strip())}</td></tr>'
+                    f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">State Code</td><td style="padding:10px 0;color:#182e21;">{escape(nysc_state_code)}</td></tr>'
                     f'</table>'
                 ),
             ),
@@ -292,6 +297,10 @@ class TrainerSignupView(APIView):
         partnership_letter = request.FILES.get("partnershipLetter")
         if not partnership_letter:
             fields["partnershipLetter"] = "Partnership letter is required during registration."
+        else:
+            is_valid, err = validate_uploaded_file(partnership_letter, ALLOWED_LETTER_EXTENSIONS)
+            if not is_valid:
+                fields["partnershipLetter"] = err
 
         _log_info(f"Trainer signup: full_name={full_name!r} email={email!r} phone={phone!r} spec={specialization!r} lgas={partner_lgas!r} has_file={bool(partnership_letter)} has_pwd={bool(password)} fields={fields}")
 
@@ -353,14 +362,15 @@ class TrainerSignupView(APIView):
                 content_html=(
                     f'<p style="margin:0 0 16px 0;">A new trainer has registered and is awaiting approval:</p>'
                     f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px;border-collapse:collapse;margin:16px 0;">'
-                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:120px;">Name</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{full_name}</td></tr>'
-                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Email</td><td style="padding:10px 0;color:#182e21;">{email}</td></tr>'
-                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Phone</td><td style="padding:10px 0;color:#182e21;">{phone}</td></tr>'
-                    f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Specialization</td><td style="padding:10px 0;color:#182e21;">{specialization}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:120px;">Name</td><td style="padding:10px 0;color:#182e21;font-weight:600;">{escape(full_name)}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Email</td><td style="padding:10px 0;color:#182e21;">{escape(email)}</td></tr>'
+                    f'<tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Phone</td><td style="padding:10px 0;color:#182e21;">{escape(phone)}</td></tr>'
+                    f'<tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Specialization</td><td style="padding:10px 0;color:#182e21;">{escape(specialization)}</td></tr>'
                     f'</table>'
                 ),
             ),
         )
+
 
         return Response({
             "ok": True,
@@ -370,7 +380,7 @@ class TrainerSignupView(APIView):
 
 
 class PasswordResetRequestView(APIView):
-    """Step 1: Send 6-digit code to email, return token."""
+    """Step 1: Send 6-digit code to email, return request token."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -382,14 +392,19 @@ class PasswordResetRequestView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
         try:
             user = User.objects.filter(email__iexact=email, is_active=True).first()
+            token = get_random_string(64)
             if user:
                 code = get_random_string(6, allowed_chars="0123456789")
-                token = get_random_string(64)
                 profile = Profile.objects.filter(user=user).first()
                 if profile:
                     profile.password_reset_token = token
                     profile.password_reset_code = code
-                    profile.save(update_fields=["password_reset_token", "password_reset_code"])
+                    profile.password_reset_code_created_at = now()
+                    profile.password_reset_attempts = 0
+                    profile.save(update_fields=[
+                        "password_reset_token", "password_reset_code",
+                        "password_reset_code_created_at", "password_reset_attempts",
+                    ])
                 html_msg = format_code_email_html(
                     title="Password Reset Code",
                     recipient_name=user.get_full_name() or user.username,
@@ -408,7 +423,7 @@ class PasswordResetRequestView(APIView):
                     recipient_list=[user.email],
                     html_message=html_msg,
                 )
-            return Response({"ok": True, "token": token if user else get_random_string(64),
+            return Response({"ok": True, "token": token,
                              "message": "If that email exists, a reset code was sent."})
         except Exception as exc:
             _log_error("Password reset request error", exc=exc)
@@ -417,7 +432,7 @@ class PasswordResetRequestView(APIView):
 
 
 class VerifyResetCodeView(APIView):
-    """Step 2: Verify the 6-digit code."""
+    """Step 2: Verify the 6-digit code with expiry and brute-force attempt limits."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -432,13 +447,53 @@ class VerifyResetCodeView(APIView):
         try:
             user = User.objects.filter(email__iexact=email, is_active=True).first()
             if not user:
-                return Response({"error": "Invalid code."},
-                                status=status.HTTP_400_BAD_REQUEST)
-            profile = Profile.objects.filter(user=user, password_reset_token=token, password_reset_code=code).first()
-            if not profile:
                 return Response({"error": "Invalid or expired code."},
                                 status=status.HTTP_400_BAD_REQUEST)
-            return Response({"ok": True, "message": "Code verified."})
+            profile = Profile.objects.filter(user=user).first()
+            if not profile or not profile.password_reset_code:
+                return Response({"error": "Invalid or expired code."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            # 1. Enforce maximum failed attempts (brute force protection)
+            if profile.password_reset_attempts >= 5:
+                profile.password_reset_code = ""
+                profile.password_reset_token = ""
+                profile.save(update_fields=["password_reset_code", "password_reset_token"])
+                return Response(
+                    {"error": "Too many invalid attempts. This reset code has been invalidated. Please request a new one."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # 2. Enforce code expiration (15 minutes)
+            if not profile.password_reset_code_created_at or (now() - profile.password_reset_code_created_at).total_seconds() > 900:
+                profile.password_reset_code = ""
+                profile.save(update_fields=["password_reset_code"])
+                return Response({"error": "Reset code has expired. Please request a new one."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            # 3. Check code match
+            if profile.password_reset_code != code or profile.password_reset_token != token:
+                profile.password_reset_attempts += 1
+                if profile.password_reset_attempts >= 5:
+                    profile.password_reset_code = ""
+                    profile.password_reset_token = ""
+                    profile.save(update_fields=["password_reset_attempts", "password_reset_code", "password_reset_token"])
+                    return Response(
+                        {"error": "Too many invalid attempts. This reset code has been invalidated. Please request a new one."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                profile.save(update_fields=["password_reset_attempts"])
+                remaining = max(0, 5 - profile.password_reset_attempts)
+                return Response({"error": f"Invalid verification code. {remaining} attempt(s) remaining."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            # 4. Success: issue a single-use authorized reset token and burn the 6-digit code
+            authorized_token = get_random_string(64)
+            profile.password_reset_token = authorized_token
+            profile.password_reset_code = ""  # burned immediately upon validation
+            profile.password_reset_attempts = 0
+            profile.save(update_fields=["password_reset_token", "password_reset_code", "password_reset_attempts"])
+            return Response({"ok": True, "token": authorized_token, "message": "Code verified."})
         except Exception as exc:
             _log_error("Verify reset code error", exc=exc)
             return Response({"error": "Verification failed."},
@@ -446,7 +501,7 @@ class VerifyResetCodeView(APIView):
 
 
 class ResetPasswordView(APIView):
-    """Step 3: Set new password."""
+    """Step 3: Set new password using the authorized reset token."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -456,18 +511,33 @@ class ResetPasswordView(APIView):
         code = data.get("code", "").strip()
         password = data.get("password", "")
 
-        if not email or not token or not code or not password:
+        if not email or not token or not password:
             return Response({"error": "All fields are required."},
                             status=status.HTTP_400_BAD_REQUEST)
         try:
             user = User.objects.filter(email__iexact=email, is_active=True).first()
             if not user:
-                return Response({"error": "Invalid request."},
+                return Response({"error": "Invalid or expired reset session."},
                                 status=status.HTTP_400_BAD_REQUEST)
-            profile = Profile.objects.filter(user=user, password_reset_token=token, password_reset_code=code).first()
-            if not profile:
-                return Response({"error": "Invalid or expired reset request."},
+            profile = Profile.objects.filter(user=user, password_reset_token=token).first()
+            if not profile or not profile.password_reset_token:
+                return Response({"error": "Invalid or expired reset session. Please request a new code."},
                                 status=status.HTTP_400_BAD_REQUEST)
+
+            # Enforce 15-minute validity for the overall reset session
+            if not profile.password_reset_code_created_at or (now() - profile.password_reset_code_created_at).total_seconds() > 900:
+                profile.password_reset_token = ""
+                profile.save(update_fields=["password_reset_token"])
+                return Response({"error": "Reset session has expired. Please request a new code."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            # If code is still set on profile, Step 2 (verify code) was not performed.
+            # Require matching code to proceed.
+            if profile.password_reset_code:
+                if not code or code != profile.password_reset_code:
+                    return Response({"error": "Verification code is required or invalid."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
             try:
                 validate_password(password, user)
             except ValidationError as exc:
@@ -478,7 +548,12 @@ class ResetPasswordView(APIView):
             user.save(update_fields=["password"])
             profile.password_reset_token = ""
             profile.password_reset_code = ""
-            profile.save(update_fields=["password_reset_token", "password_reset_code"])
+            profile.password_reset_code_created_at = None
+            profile.password_reset_attempts = 0
+            profile.save(update_fields=[
+                "password_reset_token", "password_reset_code",
+                "password_reset_code_created_at", "password_reset_attempts",
+            ])
             return Response({"ok": True, "message": "Password reset successfully."})
         except Exception as exc:
             _log_error("Password reset error", exc=exc)
@@ -487,7 +562,7 @@ class ResetPasswordView(APIView):
 
 
 class AdminSignupView(APIView):
-    """Admin signup — accessible at secret URL, creates hidden admin account."""
+    """Admin signup — validates dynamic 20-character invitation key or fallback secret."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -503,12 +578,39 @@ class AdminSignupView(APIView):
         fields = {}
 
         secret = data.get("secret", "").strip()
-        expected_secret = getattr(django_settings, "ADMIN_SIGNUP_SECRET", "")
-        if not expected_secret or secret != expected_secret:
-            return Response(
-                {"error": "Invalid or missing admin security key.", "fields": {"secret": "A valid admin security key is required."}},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        invitation = None
+        if secret:
+            inv_by_secret = AdminInvitation.objects.filter(secret_key=secret).first()
+            if inv_by_secret:
+                if inv_by_secret.email.strip().lower() != email.strip().lower():
+                    return Response(
+                        {"error": "This admin security key was issued to a different email address.",
+                         "fields": {"secret": "Key does not match this email address."}},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if inv_by_secret.is_used:
+                    return Response(
+                        {"error": "This admin invitation secret key has already been used.",
+                         "fields": {"secret": "Key has already been used."}},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if inv_by_secret.is_expired:
+                    return Response(
+                        {"error": "This admin invitation secret key has expired (10-minute validity). Please request a new key.",
+                         "fields": {"secret": "Invitation key has expired."}},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                invitation = inv_by_secret
+                role = invitation.role
+
+        if not invitation:
+            expected_secret = getattr(django_settings, "ADMIN_SIGNUP_SECRET", "")
+            if not expected_secret or not hmac.compare_digest(secret, expected_secret):
+                return Response(
+                    {"error": "Invalid or expired admin security key.",
+                     "fields": {"secret": "The 20-character secret key does not match this email or has expired."}},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         if not email:
             fields["email"] = "Email is required."
@@ -546,25 +648,198 @@ class AdminSignupView(APIView):
                     password=password,
                     first_name=parts[0],
                     last_name=parts[1] if len(parts) > 1 else "",
+                    is_staff=True,
                 )
+                # Since the dynamic key was delivered directly to this email, ownership is verified
+                is_verified = bool(invitation is not None)
                 profile = Profile.objects.create(
                     user=user,
                     role=role,
                     phone=phone,
-                    is_email_verified=False,
+                    is_email_verified=is_verified,
+                    is_authorized=True,
                     is_hidden=True,
                 )
-                _send_verification_code_email(user, profile)
-            _log_info(f"Admin account created: {email} (role={role})")
+                if invitation:
+                    invitation.is_used = True
+                    invitation.used_at = now()
+                    invitation.used_by = user
+                    invitation.save(update_fields=["is_used", "used_at", "used_by"])
+                else:
+                    _send_verification_code_email(user, profile)
+
+            _log_info(f"Admin account created: {email} (role={role}, verified={is_verified})")
             return Response({
                 "ok": True,
-                "message": "Admin account created. Please verify your email.",
+                "message": "Admin account created successfully.",
+                "verified": is_verified,
                 "email": email,
             }, status=status.HTTP_201_CREATED)
         except Exception as exc:
             _log_error("Admin signup error", exc=exc)
             return Response({"error": "Signup failed. Please try again."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class AdminInviteCreateView(APIView):
+    """Generates a dynamic 20-character secret key and emails an invitation to the intended admin."""
+    permission_classes = [HasRole("dunis_admin")]
+
+    def get(self, request):
+        invitations = AdminInvitation.objects.select_related("invited_by", "used_by").all().order_by("-created_at")[:50]
+        return Response({
+            "invitations": [
+                {
+                    "id": inv.id,
+                    "email": inv.email,
+                    "role": inv.role,
+                    "roleDisplay": inv.get_role_display(),
+                    "secretKey": inv.secret_key,
+                    "isUsed": inv.is_used,
+                    "isExpired": inv.is_expired,
+                    "createdAt": inv.created_at.isoformat(),
+                    "expiresAt": inv.expires_at.isoformat(),
+                    "invitedBy": (inv.invited_by.get_full_name() or inv.invited_by.email) if inv.invited_by else "System (CLI)",
+                    "usedBy": inv.used_by.email if inv.used_by else None,
+                    "usedAt": inv.used_at.isoformat() if inv.used_at else None,
+                }
+                for inv in invitations
+            ]
+        })
+
+    def post(self, request):
+        data = request.data
+        email = clean_email(data.get("email", ""))
+        role = data.get("role", "saed_admin").strip()
+        if role not in ("saed_admin", "dunis_admin"):
+            role = "saed_admin"
+
+        if not email:
+            return Response(
+                {"error": "Valid email address is required.", "fields": {"email": "Email is required."}},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email__iexact=email).exists():
+            return Response(
+                {"error": "A user with this email address already has an account.", "fields": {"email": "Account already exists."}},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Invalidate any pending unused invitations for this email address
+        AdminInvitation.objects.filter(email__iexact=email, is_used=False).delete()
+
+        secret_key = generate_admin_secret_key(20)
+        expires_at = now() + timedelta(minutes=10)
+
+        invitation = AdminInvitation.objects.create(
+            email=email,
+            role=role,
+            secret_key=secret_key,
+            invited_by=request.user,
+            expires_at=expires_at,
+        )
+
+        send_admin_invitation_email(invitation)
+
+        _log_info(f"Admin invitation sent to {email} ({role}) by {request.user.email}")
+        return Response({
+            "ok": True,
+            "message": f"20-character secret key generated and dispatched to {email}. Valid for 10 minutes.",
+            "invitation": {
+                "id": invitation.id,
+                "email": invitation.email,
+                "role": invitation.role,
+                "secretKey": invitation.secret_key,
+                "expiresAt": invitation.expires_at.isoformat(),
+                "createdAt": invitation.created_at.isoformat(),
+            }
+        }, status=status.HTTP_201_CREATED)
+
+
+class AdminInviteListView(APIView):
+    """Lists pending and historical admin invitations."""
+    permission_classes = [HasRole("dunis_admin")]
+
+    def get(self, request):
+        invitations = AdminInvitation.objects.select_related("invited_by", "used_by").all().order_by("-created_at")[:50]
+        return Response({
+            "invitations": [
+                {
+                    "id": inv.id,
+                    "email": inv.email,
+                    "role": inv.role,
+                    "roleDisplay": inv.get_role_display(),
+                    "secretKey": inv.secret_key,
+                    "isUsed": inv.is_used,
+                    "isExpired": inv.is_expired,
+                    "createdAt": inv.created_at.isoformat(),
+                    "expiresAt": inv.expires_at.isoformat(),
+                    "invitedBy": (inv.invited_by.get_full_name() or inv.invited_by.email) if inv.invited_by else "System (CLI)",
+                    "usedBy": inv.used_by.email if inv.used_by else None,
+                    "usedAt": inv.used_at.isoformat() if inv.used_at else None,
+                }
+                for inv in invitations
+            ]
+        })
+
+
+class AdminInviteRevokeView(APIView):
+    """Revokes a pending admin invitation."""
+    permission_classes = [HasRole("dunis_admin")]
+
+    def delete(self, request, invitation_id):
+        try:
+            invitation = AdminInvitation.objects.get(id=invitation_id)
+        except AdminInvitation.DoesNotExist:
+            return Response({"error": "Invitation not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if invitation.is_used:
+            return Response({"error": "Cannot revoke an invitation that has already been used."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        invitation.delete()
+        return Response({"ok": True, "message": "Admin invitation revoked successfully."})
+
+
+class AdminResendKeyView(APIView):
+    """Allows an intended admin to request a fresh 20-character key for an active invitation."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = clean_email(request.data.get("email", ""))
+        if not email:
+            return Response({"error": "Email is required.", "fields": {"email": "Email is required."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        invitation = AdminInvitation.objects.filter(email__iexact=email, is_used=False).order_by("-created_at").first()
+        if not invitation:
+            # Generic response to prevent user enumeration
+            return Response({
+                "ok": True,
+                "message": f"If an active admin invitation exists for {email}, a new key has been sent.",
+            })
+
+        # Cooldown: enforce at least 60 seconds between resend requests to prevent email flooding
+        now_ts = now()
+        if invitation.updated_at and (now_ts - invitation.updated_at).total_seconds() < 60:
+            remaining = int(60 - (now_ts - invitation.updated_at).total_seconds())
+            return Response(
+                {"error": f"Please wait {remaining} seconds before requesting a new key."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        # Refresh secret key and give a new 10-minute window
+        invitation.secret_key = generate_admin_secret_key(20)
+        invitation.expires_at = now_ts + timedelta(minutes=10)
+        invitation.save(update_fields=["secret_key", "expires_at", "updated_at"])
+
+        send_admin_invitation_email(invitation)
+
+        return Response({
+            "ok": True,
+            "message": f"If an active admin invitation exists for {email}, a new key has been sent.",
+        })
 
 
 class SendCodeView(APIView):
@@ -625,26 +900,58 @@ class VerifyCodeView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         if profile.is_email_verified:
-            login(request, user, backend="django.contrib.auth.backends.ModelBackend")
-            return Response({"user": user_payload(user, request)})
+            return Response(
+                {"error": "This email address is already verified. Please sign in with your password.",
+                 "already_verified": True},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if not profile.email_verification_code or profile.email_verification_code != code:
-            return Response({"error": "Invalid code.",
-                             "fields": {"code": "Invalid or incorrect code."}},
+        # 1. Enforce maximum failed attempts (brute force protection)
+        if profile.email_verification_attempts >= 5:
+            profile.email_verification_code = ""
+            profile.save(update_fields=["email_verification_code"])
+            return Response(
+                {"error": "Too many invalid attempts. This verification code has been invalidated. Please request a new one.",
+                 "fields": {"code": "Too many invalid attempts. Request a new code."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not profile.email_verification_code:
+            return Response({"error": "No verification code pending. Please request a new one.",
+                             "fields": {"code": "No verification code pending."}},
                             status=status.HTTP_400_BAD_REQUEST)
 
         if profile.email_verification_code_at:
             elapsed = (now() - profile.email_verification_code_at).total_seconds()
             if elapsed > 600:
+                profile.email_verification_code = ""
+                profile.save(update_fields=["email_verification_code"])
                 return Response({"error": "Code has expired.",
                                  "fields": {"code": "Code has expired. Please request a new one."}},
                                 status=status.HTTP_400_BAD_REQUEST)
+
+        if profile.email_verification_code != code:
+            profile.email_verification_attempts += 1
+            remaining = max(0, 5 - profile.email_verification_attempts)
+            if profile.email_verification_attempts >= 5:
+                profile.email_verification_code = ""
+                profile.save(update_fields=["email_verification_code", "email_verification_attempts"])
+                return Response(
+                    {"error": "Too many invalid attempts. This verification code has been invalidated. Please request a new one.",
+                     "fields": {"code": "Code invalidated due to too many attempts."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            profile.save(update_fields=["email_verification_attempts"])
+            return Response({"error": f"Invalid code. {remaining} attempt(s) remaining.",
+                             "fields": {"code": "Invalid or incorrect code."}},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         profile.is_email_verified = True
         profile.is_verified = True
         profile.email_verification_code = ""
         profile.email_verification_code_at = None
-        profile.save(update_fields=["is_email_verified", "is_verified", "email_verification_code", "email_verification_code_at"])
+        profile.email_verification_attempts = 0
+        profile.save(update_fields=["is_email_verified", "is_verified", "email_verification_code", "email_verification_code_at", "email_verification_attempts"])
 
         login(request, user, backend="django.contrib.auth.backends.ModelBackend")
         _log_info(f"User {user.id} verified email via code and logged in")

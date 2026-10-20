@@ -9,8 +9,12 @@ from rest_framework import status
 from ..models import Course, Module, Lesson
 from .base import (
     _log_error, module_payload, lesson_payload,
-    HasRole, IsAuthenticatedAPI,
+    HasRole, IsAuthenticatedAPI, role_for,
 )
+
+
+def _is_admin(user):
+    return role_for(user) in ("saed_admin", "dunis_admin")
 
 
 class ManageModulesView(APIView):
@@ -19,7 +23,10 @@ class ManageModulesView(APIView):
 
     def get(self, request):
         course_id = request.GET.get("courseId")
-        modules = Module.objects.filter(course__trainer=request.user)
+        if _is_admin(request.user):
+            modules = Module.objects.all()
+        else:
+            modules = Module.objects.filter(course__trainer=request.user)
         if course_id:
             modules = modules.filter(course_id=course_id)
         return Response({"modules": [module_payload(m) for m in modules]})
@@ -35,7 +42,10 @@ class ManageModulesView(APIView):
             return Response({"error": "title is required."},
                             status=status.HTTP_400_BAD_REQUEST)
         try:
-            course = Course.objects.get(id=course_id, trainer=request.user)
+            if _is_admin(request.user):
+                course = Course.objects.get(id=course_id)
+            else:
+                course = Course.objects.get(id=course_id, trainer=request.user)
         except Course.DoesNotExist:
             return Response({"error": "Course not found."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -56,7 +66,10 @@ class ManageModuleDetailView(APIView):
 
     def patch(self, request, module_id):
         try:
-            module = Module.objects.get(id=module_id, course__trainer=request.user)
+            if _is_admin(request.user):
+                module = Module.objects.get(id=module_id)
+            else:
+                module = Module.objects.get(id=module_id, course__trainer=request.user)
         except Module.DoesNotExist:
             return Response({"error": "Module not found."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -71,7 +84,10 @@ class ManageModuleDetailView(APIView):
 
     def delete(self, request, module_id):
         try:
-            module = Module.objects.get(id=module_id, course__trainer=request.user)
+            if _is_admin(request.user):
+                module = Module.objects.get(id=module_id)
+            else:
+                module = Module.objects.get(id=module_id, course__trainer=request.user)
         except Module.DoesNotExist:
             return Response({"error": "Module not found."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -86,7 +102,10 @@ class ManageLessonsView(APIView):
     def get(self, request):
         module_id = request.GET.get("moduleId")
         course_id = request.GET.get("courseId")
-        lessons = Lesson.objects.filter(module__course__trainer=request.user)
+        if _is_admin(request.user):
+            lessons = Lesson.objects.all()
+        else:
+            lessons = Lesson.objects.filter(module__course__trainer=request.user)
         if module_id:
             lessons = lessons.filter(module_id=module_id)
         elif course_id:
@@ -104,7 +123,10 @@ class ManageLessonsView(APIView):
             return Response({"error": "title is required."},
                             status=status.HTTP_400_BAD_REQUEST)
         try:
-            module = Module.objects.get(id=module_id, course__trainer=request.user)
+            if _is_admin(request.user):
+                module = Module.objects.get(id=module_id)
+            else:
+                module = Module.objects.get(id=module_id, course__trainer=request.user)
         except Module.DoesNotExist:
             return Response({"error": "Module not found."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -134,7 +156,10 @@ class ManageLessonDetailView(APIView):
 
     def patch(self, request, lesson_id):
         try:
-            lesson = Lesson.objects.get(id=lesson_id, module__course__trainer=request.user)
+            if _is_admin(request.user):
+                lesson = Lesson.objects.get(id=lesson_id)
+            else:
+                lesson = Lesson.objects.get(id=lesson_id, module__course__trainer=request.user)
         except Lesson.DoesNotExist:
             return Response({"error": "Lesson not found."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -160,7 +185,10 @@ class ManageLessonDetailView(APIView):
 
     def delete(self, request, lesson_id):
         try:
-            lesson = Lesson.objects.get(id=lesson_id, module__course__trainer=request.user)
+            if _is_admin(request.user):
+                lesson = Lesson.objects.get(id=lesson_id)
+            else:
+                lesson = Lesson.objects.get(id=lesson_id, module__course__trainer=request.user)
         except Lesson.DoesNotExist:
             return Response({"error": "Lesson not found."},
                             status=status.HTTP_404_NOT_FOUND)

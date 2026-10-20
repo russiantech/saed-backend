@@ -10,6 +10,7 @@ from ..models import Profile
 from .base import (
     _log_error, _log_info, _log_warning, read_json, user_payload,
     _safe_int, _parse_multipart, validation_error, IsAuthenticatedAPI,
+    ALLOWED_PROFILE_PIC_EXTENSIONS, ALLOWED_LETTER_EXTENSIONS, validate_uploaded_file,
 )
 
 
@@ -95,9 +96,17 @@ class UpdateProfileView(APIView):
                 if files:
                     profile_picture = files.get("profilePicture")
                     if profile_picture:
+                        valid, err = validate_uploaded_file(profile_picture, ALLOWED_PROFILE_PIC_EXTENSIONS)
+                        if not valid:
+                            return Response({"error": err, "fields": {"profilePicture": err}},
+                                            status=status.HTTP_400_BAD_REQUEST)
                         profile.profile_picture = profile_picture
                     partnership_letter = files.get("partnershipLetter")
                     if partnership_letter:
+                        valid, err = validate_uploaded_file(partnership_letter, ALLOWED_LETTER_EXTENSIONS)
+                        if not valid:
+                            return Response({"error": err, "fields": {"partnershipLetter": err}},
+                                            status=status.HTTP_400_BAD_REQUEST)
                         profile.partnership_letter = partnership_letter
 
                 profile.save()

@@ -100,8 +100,8 @@ _*/
 .0.env
 
 
-cookies5.txt
-new_login.json
-old_login.json
-reset_pw.json
-verify_code.json
+cookies*.txt
+cookies/
+*_login.json
+*reset*.json
+*verify*.json

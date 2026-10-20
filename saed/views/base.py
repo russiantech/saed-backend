@@ -5,7 +5,9 @@ Shared helpers, decorators, utilities, constants, and payload builders.
 
 import json
 import logging
+import secrets
 import threading
+import urllib.parse
 from io import BytesIO
 from datetime import date, timedelta
 
@@ -16,6 +18,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.http import JsonResponse, QueryDict
 from django.http.multipartparser import MultiPartParser, MultiPartParserError
+from django.utils.html import escape
 from django.utils.timezone import now
 
 from ..models import (
@@ -79,16 +82,42 @@ def _send_email_async(
     return thread
 
 
+ALLOWED_PROFILE_PIC_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+ALLOWED_LETTER_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+MAX_PROFILE_UPLOAD_SIZE = 5 * 1024 * 1024  # 5 MB
+
+
+def validate_uploaded_file(file_obj, allowed_extensions, max_bytes=MAX_PROFILE_UPLOAD_SIZE):
+    """
+    Validate uploaded file extension and size.
+    Returns (is_valid: bool, error_msg: str).
+    """
+    if not file_obj:
+        return True, ""
+    if getattr(file_obj, "size", 0) > max_bytes:
+        max_mb = max_bytes // (1024 * 1024)
+        return False, f"File size exceeds maximum allowed limit of {max_mb} MB."
+    import os
+    ext = os.path.splitext(getattr(file_obj, "name", ""))[1].lower()
+    if ext not in allowed_extensions:
+        return False, f"File type '{ext}' is not allowed. Allowed types: {', '.join(sorted(allowed_extensions))}."
+    return True, ""
+
+
 def format_code_email_html(title, recipient_name, code, expiry_minutes=10, description=None):
     if not description:
         description = "Please use the 6-digit code below to complete your verification:"
     
+    safe_title = escape(str(title or ""))
+    safe_name = escape(str(recipient_name or ""))
+    safe_code = escape(str(code or ""))
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title}</title>
+  <title>{safe_title}</title>
 </head>
 <body style="margin:0;padding:0;background-color:#f6f8f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18231d;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f6f8f4;padding:32px 12px;">
@@ -103,9 +132,9 @@ def format_code_email_html(title, recipient_name, code, expiry_minutes=10, descr
           </tr>
           <tr>
             <td style="padding:36px 32px 28px 32px;">
-              <h2 style="margin:0 0 16px 0;font-size:20px;font-weight:700;color:#182e21;">{title}</h2>
+              <h2 style="margin:0 0 16px 0;font-size:20px;font-weight:700;color:#182e21;">{safe_title}</h2>
               <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#243028;">
-                Hello <strong>{recipient_name}</strong>,
+                Hello <strong>{safe_name}</strong>,
               </p>
               <p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#59665d;">
                 {description}
@@ -115,7 +144,7 @@ def format_code_email_html(title, recipient_name, code, expiry_minutes=10, descr
                 <tr>
                   <td align="center" style="background-color:#eef6f1;border:1px solid #c2dfce;border-radius:12px;padding:22px 16px;">
                     <div style="font-size:12px;font-weight:700;color:#59665d;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;">Verification Code</div>
-                    <div style="font-family:'Courier New',Courier,monospace,Inter,sans-serif;font-size:36px;font-weight:800;letter-spacing:10px;color:#0f6b45;padding-left:10px;">{code}</div>
+                    <div style="font-family:'Courier New',Courier,monospace,Inter,sans-serif;font-size:36px;font-weight:800;letter-spacing:10px;color:#0f6b45;padding-left:10px;">{safe_code}</div>
                   </td>
                 </tr>
               </table>
@@ -143,13 +172,17 @@ def format_code_email_html(title, recipient_name, code, expiry_minutes=10, descr
 
 
 def format_notification_email_html(title, recipient_name, content_html, action_url=None, action_text=None, note=None):
+    safe_title = escape(str(title or ""))
+    safe_name = escape(str(recipient_name or ""))
     action_button = ""
     if action_url and action_text:
+        safe_url = escape(str(action_url))
+        safe_action_text = escape(str(action_text))
         action_button = f"""
         <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:24px 0;">
           <tr>
             <td align="center" style="border-radius:8px;background-color:#0f6b45;">
-              <a href="{action_url}" target="_blank" style="font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;padding:12px 28px;display:inline-block;border-radius:8px;">{action_text}</a>
+              <a href="{safe_url}" target="_blank" style="font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;padding:12px 28px;display:inline-block;border-radius:8px;">{safe_action_text}</a>
             </td>
           </tr>
         </table>
@@ -158,16 +191,17 @@ def format_notification_email_html(title, recipient_name, content_html, action_u
     if note:
         callout = f"""
         <div style="background-color:#f6f9f6;border-left:4px solid #0f6b45;border-radius:4px;padding:12px 16px;margin:24px 0 0 0;">
-          <p style="margin:0;font-size:13px;line-height:1.5;color:#59665d;">{note}</p>
+          <p style="margin:0;font-size:13px;line-height:1.5;color:#59665d;">{escape(str(note))}</p>
         </div>
         """
-    greeting = f'<p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#243028;">Hello <strong>{recipient_name}</strong>,</p>' if recipient_name else ''
+    greeting = f'<p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#243028;">Hello <strong>{safe_name}</strong>,</p>' if safe_name else ''
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title}</title>
+  <title>{safe_title}</title>
+
 </head>
 <body style="margin:0;padding:0;background-color:#f6f8f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18231d;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f6f8f4;padding:32px 12px;">
@@ -203,6 +237,61 @@ def format_notification_email_html(title, recipient_name, content_html, action_u
   </table>
 </body>
 </html>"""
+
+
+def generate_admin_secret_key(length=20):
+    """Generates an unambiguous, cryptographically random alphanumeric secret key."""
+    alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def send_admin_invitation_email(invitation, sync=False):
+    """Dispatches the official administrative invitation email with the 20-character secret key."""
+    frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
+    signup_link = f"{frontend_url}/admin-signup?email={urllib.parse.quote(invitation.email)}&secret={invitation.secret_key}&role={invitation.role}"
+
+    role_label = "DUNIS Platform Super Admin" if invitation.role == "dunis_admin" else "NYSC SAED Scheme Administrator"
+
+    html_content = f"""
+    <p style="margin:0 0 16px 0;">You have been invited to register as an administrator on the <strong>NYSC SAED Information Management System</strong>.</p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px;border-collapse:collapse;margin:16px 0;">
+      <tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;width:140px;">Administrative Role</td><td style="padding:10px 0;color:#182e21;font-weight:700;">{role_label}</td></tr>
+      <tr style="border-bottom:1px solid #eef2ef;"><td style="padding:10px 0;color:#59665d;font-weight:600;">Assigned Email</td><td style="padding:10px 0;color:#182e21;">{escape(invitation.email)}</td></tr>
+      <tr><td style="padding:10px 0;color:#59665d;font-weight:600;">Key Validity</td><td style="padding:10px 0;color:#d97706;font-weight:600;">10 Minutes (Single-Use)</td></tr>
+    </table>
+
+    <div style="background-color:#eef6f1;border:1px solid #c2dfce;border-radius:12px;padding:20px 16px;text-align:center;margin:24px 0;">
+      <div style="font-size:12px;font-weight:700;color:#59665d;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;">20-Character Secret Key</div>
+      <div style="font-family:'Courier New',Courier,monospace;font-size:24px;font-weight:800;letter-spacing:4px;color:#0f6b45;user-select:all;">{invitation.secret_key}</div>
+    </div>
+    """
+
+    html_msg = format_notification_email_html(
+        title="Administrative Onboarding Invitation",
+        recipient_name="Administrator",
+        content_html=html_content,
+        action_url=signup_link,
+        action_text="Complete Admin Registration",
+        note="🔒 For security purposes, this secret key is strictly single-use and will expire in 10 minutes. If you did not expect this invitation, please contact your systems director immediately.",
+    )
+
+    thread = _send_email_async(
+        subject=f"SAED IMS - Admin Invitation ({role_label})",
+        message=(
+            f"Hello,\n\n"
+            f"You have been invited to register as an administrator on NYSC SAED IMS.\n\n"
+            f"Role: {role_label}\n"
+            f"Your single-use 20-character secret key is: {invitation.secret_key}\n"
+            f"This key expires in 10 minutes.\n\n"
+            f"Complete your registration here:\n{signup_link}\n\n"
+            f"If you did not expect this invitation, please contact your systems director."
+        ),
+        recipient_list=[invitation.email],
+        html_message=html_msg,
+    )
+    if sync and thread:
+        thread.join(timeout=15)
+    return thread
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -569,6 +658,9 @@ def application_payload(enrollment):
         "type": "course_enrollment",
         "amountPaid": str(enrollment.amount_paid),
         "paymentVerified": enrollment.payment_verified,
+        "refundRequested": getattr(enrollment, "refund_requested", False),
+        "refundProcessed": getattr(enrollment, "refund_processed", False),
+        "refundNote": getattr(enrollment, "refund_note", "") or "",
         "totalLessons": total,
         "completedLessons": completed,
         "progressPercentage": round(completed / total * 100) if total else 0,

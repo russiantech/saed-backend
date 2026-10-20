@@ -47,11 +47,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Profile
+from django.conf import settings as django_settings
+from ..models import Profile, Notification
 from .base import (
     _log_error, _log_info, _log_warning,
     read_json, clean_email, user_payload, _safe_int,
     validation_error, role_for, VALID_AUTH_STATUSES, HasRole,
+    _send_email_async, format_notification_email_html, _notify_user,
+    ALLOWED_LETTER_EXTENSIONS, validate_uploaded_file,
 )
 
 # Which authorization_status values a profile may move to, given its
@@ -106,6 +109,38 @@ def apply_authorization_transition(user, profile, target_status):
         # review before it can be approved again.
         user.is_active = True
 
+    if target_status == "approved" and profile.role == "trainer":
+        frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:3002").rstrip("/")
+        name = user.get_full_name() or user.email
+        _notify_user(
+            user,
+            "Trainer Application Approved",
+            "Congratulations! Your trainer application has been approved. Please pay the activation fee to unlock your dashboard.",
+            reason="trainer_approved",
+            created_by_role="admin",
+        )
+        _send_email_async(
+            subject="SAED IMS - Trainer Application Approved!",
+            message=(
+                f"Hello {name},\n\n"
+                f"Congratulations! Your SAED trainer application has been reviewed and approved by the NYSC SAED Administration.\n\n"
+                f"To complete your onboarding and activate your trainer portal, please log in to your account and complete the annual ₦5,000 trainer activation fee.\n\n"
+                f"Log in here: {frontend_url}/login\n\n"
+                f"Best regards,\nNYSC SAED IMS"
+            ),
+            recipient_list=[user.email],
+            html_message=format_notification_email_html(
+                title="Application Approved!",
+                recipient_name=name,
+                content_html=(
+                    '<p style="margin:0 0 12px 0;">Great news! Your trainer application and credentials have been reviewed and approved by the NYSC SAED Administration.</p>'
+                    '<p style="margin:0 0 12px 0;">To complete your onboarding, unlock your trainer portal, and start publishing courses, please log in to your account and pay the annual <strong>&#8358;5,000</strong> trainer activation fee.</p>'
+                ),
+                action_text="Log In & Pay Activation Fee",
+                action_url=f"{frontend_url}/login",
+            ),
+        )
+
 
 class ManageUsersView(APIView):
     permission_classes = [HasRole("saed_admin", "dunis_admin")]
@@ -159,6 +194,17 @@ class ManageUserDetailView(APIView):
         # remove, restore, or directly activate/deactivate an account, even
         # by calling this endpoint directly rather than clicking a button.
         actor_role = role_for(request.user)
+        target_role = getattr(profile, "role", "")
+
+        # Administrator account protection:
+        # Administrator accounts can only be managed by dunis_admin.
+        # A saed_admin must never modify, demote, or tamper with an administrator account.
+        if target_role in ("dunis_admin", "saed_admin") and actor_role != "dunis_admin":
+            return Response(
+                {"error": "You do not have permission to modify administrator accounts."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         if actor_role == "saed_admin":
             if data.get("restore"):
                 return Response(
@@ -173,6 +219,11 @@ class ManageUserDetailView(APIView):
             if "isActive" in data:
                 return Response(
                     {"error": "You do not have permission to activate or deactivate accounts."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if "canUploadFastTrack" in data:
+                return Response(
+                    {"error": "You do not have permission to modify Fast Track authorization."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
@@ -190,6 +241,9 @@ class ManageUserDetailView(APIView):
                 if "role" in data:
                     if user.id == request.user.id:
                         return Response({"error": "You cannot change your own role."},
+                                        status=status.HTTP_400_BAD_REQUEST)
+                    if target_role in ("dunis_admin", "saed_admin"):
+                        return Response({"error": "Administrator roles cannot be changed from this endpoint."},
                                         status=status.HTTP_400_BAD_REQUEST)
                     if data["role"] not in {"corps_member", "trainer"}:
                         return Response({"error": "Admins can only assign corps member or trainer roles."},
@@ -280,7 +334,12 @@ class ManageUserDetailView(APIView):
                     except (ValueError, TypeError):
                         pass
                 if "partnershipLetter" in request.FILES:
-                    profile.partnership_letter = request.FILES["partnershipLetter"]
+                    letter = request.FILES["partnershipLetter"]
+                    valid, err = validate_uploaded_file(letter, ALLOWED_LETTER_EXTENSIONS)
+                    if not valid:
+                        return Response({"error": err, "fields": {"partnershipLetter": err}},
+                                        status=status.HTTP_400_BAD_REQUEST)
+                    profile.partnership_letter = letter
 
                 user.save()
                 profile.save()

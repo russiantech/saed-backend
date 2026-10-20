@@ -93,9 +93,25 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
+database_url = os.getenv("DATABASE_URL", "").strip()
 database_engine = os.getenv("DATABASE_ENGINE", "").strip()
 
-if database_engine:
+if database_url:
+    import urllib.parse
+    url = urllib.parse.urlparse(database_url)
+    engine = "django.db.backends.postgresql" if url.scheme in ("postgres", "postgresql") else f"django.db.backends.{url.scheme}"
+    DATABASES = {
+        "default": {
+            "ENGINE": engine,
+            "NAME": url.path.lstrip("/"),
+            "USER": urllib.parse.unquote(url.username or ""),
+            "PASSWORD": urllib.parse.unquote(url.password or ""),
+            "HOST": url.hostname or "",
+            "PORT": str(url.port or ("5432" if "postgres" in engine else "")),
+            "CONN_MAX_AGE": int(os.getenv("DATABASE_CONN_MAX_AGE", "60")),
+        }
+    }
+elif database_engine:
     DATABASES = {
         "default": {
             "ENGINE": database_engine,
@@ -132,6 +148,57 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Production Storage (Cloudinary / AWS S3)
+USE_S3 = os.getenv("USE_S3", "").strip().lower() in ("true", "1", "yes")
+USE_CLOUDINARY = os.getenv("USE_CLOUDINARY", "").strip().lower() in ("true", "1", "yes")
+
+if USE_CLOUDINARY:
+    CLOUDINARY_STORAGE = {
+        "CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME", ""),
+        "API_KEY": os.getenv("CLOUDINARY_API_KEY", ""),
+        "API_SECRET": os.getenv("CLOUDINARY_API_SECRET", ""),
+    }
+    STORAGES = {
+        "default": {
+            "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+elif USE_S3:
+    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
+    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME", "")
+    AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", "")
+    AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN", f"{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com" if AWS_STORAGE_BUCKET_NAME else "")
+    AWS_DEFAULT_ACL = None
+    AWS_S3_OBJECT_PARAMETERS = {"CacheControl": "max-age=86400"}
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+
+# Sentry Performance & Error Monitoring
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.django import DjangoIntegration
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            integrations=[DjangoIntegration()],
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.2")),
+            send_default_pii=False,
+            environment=os.getenv("ENVIRONMENT", "production"),
+        )
+    except ImportError:
+        pass
 
 # Allow these headers
 CORS_ALLOW_HEADERS = [
@@ -277,6 +344,14 @@ REST_FRAMEWORK = {
         "rest_framework.parsers.MultiPartParser",
         "rest_framework.parsers.FormParser",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": os.getenv("THROTTLE_ANON_RATE", "100/minute"),
+        "user": os.getenv("THROTTLE_USER_RATE", "1000/minute"),
+    },
     "UNAUTHENTICATED_USER": None,
 }
 
