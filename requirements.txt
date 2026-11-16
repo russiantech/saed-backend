@@ -1,0 +1,13 @@
+# Runtime
+Django>=5.2.18,<5.3
+djangorestframework>=3.16,<4
+django-cors-headers>=4.9,<5
+dj-database-url>=3.1,<4
+psycopg[binary]>=3.3,<4        # PostgreSQL driver (SQLite needs nothing extra)
+whitenoise>=6.12,<7
+requests>=2.32,<3
+Pillow>=11.0
+python-dotenv>=1.1,<2
+gunicorn>=23.0 ; sys_platform != "win32"
+# Optional: shared cache for rate limiting across workers (set REDIS_URL)
+# redis>=5.0
