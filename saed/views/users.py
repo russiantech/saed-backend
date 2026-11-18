@@ -119,7 +119,20 @@ class ManageUsersView(APIView):
                     profile__authorization_status="restricted",
                     profile__restricted_by__profile__role="dunis_admin"
                 )
-            return Response({"users": [user_payload(u, request) for u in users]})
+            sid = request.GET.get("streamId", "")
+            if sid.isdigit():
+                users = users.filter(stream_memberships__stream_id=int(sid)).distinct()
+            track = request.GET.get("track", "")
+            if track in ("in_camp", "post_camp"):
+                users = users.filter(profile__account_mode=track)
+            users = users.prefetch_related("stream_memberships__stream")
+            out = []
+            for u in users:
+                d = user_payload(u, request)
+                d["streams"] = [{"streamId": m.stream_id, "streamName": m.stream.name, "status": m.status}
+                                for m in u.stream_memberships.all()]
+                out.append(d)
+            return Response({"users": out})
         except Exception as exc:
             _log_error("User list error", exc=exc)
             return Response({"error": "Failed to load users."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -139,7 +152,7 @@ class ManageUserDetailView(APIView):
             user = User.objects.select_related("profile").get(id=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response({"user": user_payload(user, request)})
+        return Response({"user": user_payload(user, request, lifecycle_info=True)})
 
     def patch(self, request, user_id):
         try:
@@ -292,5 +305,5 @@ class ManageUserDetailView(APIView):
             return Response({"error": "User update failed."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        return Response({"user": user_payload(user, request)})
+        return Response({"user": user_payload(user, request, lifecycle_info=True)})
 

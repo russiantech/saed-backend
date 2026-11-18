@@ -19,7 +19,7 @@ from .base import (
     read_json, user_payload, trainer_payload, trainers_payload,
     course_payload, connection_payload, role_for, trainer_public_payload, annotate_courses,
     ensure_trainer_connection, paginate,
-    validation_error, HasRole, IsAuthenticatedAPI, IsAuthorizedTrainer,
+    validation_error, HasRole, HasRoleTrack, IsAuthenticatedAPI, IsAuthorizedTrainer,
 )
 
 
@@ -36,7 +36,7 @@ def _trainer_card(p, request, courses=None):
 
 class AvailableTrainersView(APIView):
     """Approved trainers. NO restrictive default filters: everything is optional."""
-    permission_classes = [HasRole("corps_member")]
+    permission_classes = [HasRoleTrack("corps_member", "post_camp")]
 
     def get(self, request):
         try:
@@ -110,7 +110,7 @@ class TrainerDetailView(APIView):
 
 
 class MyTrainersView(APIView):
-    permission_classes = [HasRole("corps_member")]
+    permission_classes = [HasRoleTrack("corps_member", "post_camp")]
 
     def get(self, request):
         try:
@@ -136,7 +136,7 @@ class MyTrainersView(APIView):
 
 class ConnectTrainerView(APIView):
     """Follow a trainer without enrolling. Enrolling in any of their courses ALSO connects automatically."""
-    permission_classes = [HasRole("corps_member")]
+    permission_classes = [HasRoleTrack("corps_member", "post_camp")]
 
     def post(self, request):
         trainer_id = request.data.get("trainerId")
@@ -163,7 +163,7 @@ class ConnectTrainerView(APIView):
 
 
 class MyConnectionsView(APIView):
-    permission_classes = [HasRole("corps_member")]
+    permission_classes = [HasRoleTrack("corps_member", "post_camp")]
 
     def get(self, request):
         try:

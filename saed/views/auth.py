@@ -89,7 +89,7 @@ class LoginView(APIView):
                 request.session.set_expiry(60 * 60 * 24 * 30)
 
             _log_info(f"User {user.id} logged in")
-            return Response({"user": user_payload(user, request)})
+            return Response({"user": user_payload(user, request, lifecycle_info=True)})
 
         except Exception as exc:
             _log_error("Login error", exc=exc, extra={"login_id": login_id}) 
@@ -139,10 +139,13 @@ class SignupView(APIView):
             fields["email"] = "An account with this email already exists."
         if role != "corps_member":
             fields["role"] = "Public signup is only available for corps members."
-        # Single corps account; camp vs post-camp is course activity
-        account_mode = (data.get("accountMode") or data.get("account_mode") or "both").strip()
-        if account_mode not in ("in_camp", "post_camp", "both"):
-            account_mode = "both"
+        # In-Camp and Post-Camp are separate tracks with their own sign-up (no "both").
+        account_mode = (data.get("accountMode") or data.get("account_mode") or "post_camp").strip()
+        if account_mode not in ("in_camp", "post_camp"):
+            fields["accountMode"] = "Choose In-Camp or Post-Camp."
+            account_mode = "post_camp"
+        in_camp = account_mode == "in_camp"
+        stream = None
 
         if role == "corps_member":
             if not data.get("phone", "").strip():
@@ -151,15 +154,26 @@ class SignupView(APIView):
                 fields["phone"] = "An account with this phone number already exists."
             if not data.get("nyscStateCode", "").strip():
                 fields["nyscStateCode"] = "NYSC state code is required."
-            if not data.get("stateOfDeployment", "").strip():
+            if not in_camp and not data.get("stateOfDeployment", "").strip():
                 fields["stateOfDeployment"] = "State of deployment is required."
-            # LGA optional at signup
             if not data.get("skillInterest", "").strip():
                 fields["skillInterest"] = "Skill interest is required."
-            if data.get("orientationCampId"):
-                from ..models import OrientationCamp
-                if not OrientationCamp.objects.filter(id=data.get("orientationCampId"), is_active=True).exists():
-                    fields["orientationCampId"] = "Invalid orientation camp."
+            if in_camp:
+                # In-Camp: a stream is mandatory; the camp (if chosen) must belong to it; no LGA is asked.
+                from ..models import OrientationCamp, Stream
+                from ..services import streams as stream_svc
+                stream = Stream.objects.filter(pk=data.get("streamId") or 0, is_active=True).first() \
+                    if str(data.get("streamId") or "").isdigit() else None
+                if stream is None or stream.is_past_deactivation():
+                    fields["streamId"] = "Choose the stream you are attending."
+                    stream = None
+                if data.get("orientationCampId"):
+                    camp_ok = OrientationCamp.objects.filter(id=data.get("orientationCampId"), is_active=True,
+                                                             stream=stream).exists() if stream else False
+                    if not camp_ok:
+                        fields["orientationCampId"] = "Choose a camp that belongs to the selected stream."
+            elif data.get("streamId") or data.get("orientationCampId"):
+                fields["accountMode"] = "Streams and camps belong to the In-Camp sign-up."
         try:
             validate_password(password)
         except ValidationError as exc:
@@ -187,17 +201,23 @@ class SignupView(APIView):
             nysc_state_code=data.get("nyscStateCode", "").strip(),
             state_of_deployment=data.get("stateOfDeployment", "").strip(),
             state_of_origin=data.get("stateOfOrigin", "").strip(),
-            lga_of_deployment=data.get("lgaOfDeployment", "").strip(),
+            lga_of_deployment="" if in_camp else data.get("lgaOfDeployment", "").strip(),
             skill_interest=data.get("skillInterest", "").strip(),
             skill_interests=data.get("skillInterests", []),
             account_mode=account_mode,
             in_camp_access_active=True,
-            ppa=data.get("ppa", "").strip(),
+            ppa="" if in_camp else data.get("ppa", "").strip(),
         )
         camp_id = data.get("orientationCampId") or data.get("orientation_camp_id")
-        if camp_id:
+        if in_camp and camp_id:
             profile_kwargs["orientation_camp_id"] = camp_id
+            if not profile_kwargs["state_of_deployment"]:
+                from ..models import OrientationCamp
+                profile_kwargs["state_of_deployment"] = OrientationCamp.objects.get(pk=camp_id).state
         Profile.objects.create(**profile_kwargs)
+        if in_camp:
+            from ..services import streams as stream_svc
+            stream_svc.join_stream(user, stream, "corps_member")
 
         _notify_admins(
             title="New Corps Member Registration",
@@ -377,7 +397,7 @@ class TrainerSignupView(APIView):
             ),
         )
 
-        return Response({"user": user_payload(user, request)}, status=status.HTTP_201_CREATED)
+        return Response({"user": user_payload(user, request, lifecycle_info=True)}, status=status.HTTP_201_CREATED)
 
 
 class PasswordResetRequestView(APIView):
@@ -781,7 +801,7 @@ class VerifyCodeView(APIView):
 
         if profile.is_email_verified:
             login(request, user, backend="django.contrib.auth.backends.ModelBackend")
-            return Response({"user": user_payload(user, request)})
+            return Response({"user": user_payload(user, request, lifecycle_info=True)})
 
         if not profile.email_verification_code or profile.email_verification_code != code:
             return Response({"error": "Invalid code.",
@@ -804,4 +824,4 @@ class VerifyCodeView(APIView):
 
         login(request, user, backend="django.contrib.auth.backends.ModelBackend")
         _log_info(f"User {user.id} verified email via code and logged in")
-        return Response({"user": user_payload(user, request)})
+        return Response({"user": user_payload(user, request, lifecycle_info=True)})

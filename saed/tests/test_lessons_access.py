@@ -325,38 +325,68 @@ class SettingsPermissionTests(TestCase):
 
 
 class InCampTests(TestCase):
-    def setUp(self):
-        from datetime import timedelta
-        from django.utils import timezone
-        from ..models import OrientationCamp
-        today = timezone.localdate()
-        self.camp = OrientationCamp.objects.create(
-            name="Camp A", state="Lagos", start_date=today - timedelta(days=10), end_date=today + timedelta(days=10), is_active=True)
-        self.trainer = mk_user("t@x.com", "trainer")
-        self.s = mk_user("s@x.com", "corps_member", orientation_camp=self.camp, in_camp_access_active=True)
-        self.c = login(self.s)
-        self.ic = mk_course(self.trainer, title="InCamp 1", course_type="in_camp", orientation_camp=self.camp)
-        self.pc = mk_course(self.trainer, title="Post 1", course_type="post_camp")
+    """In-Camp and Post-Camp are separate tracks: an account only ever sees its own programme."""
 
-    def test_incamp_lists_only_incamp_courses(self):
+    def setUp(self):
+        from ..models import OrientationCamp
+        from .helpers import mk_incamp, mk_stream
+        self.stream = mk_stream(1)
+        self.camp = OrientationCamp.objects.create(
+            name="Camp A", state="Lagos", start_date=self.stream.start_date, end_date=self.stream.end_date,
+            is_active=True, stream=self.stream)
+        self.trainer = mk_incamp("t@x.com", "trainer", self.stream)
+        self.post_trainer = mk_user("pt@x.com", "trainer")
+        self.s = mk_incamp("s@x.com", "corps_member", self.stream, orientation_camp=self.camp)
+        self.p = mk_user("p@x.com", "corps_member")  # Post-Camp corps member
+        self.c, self.pcl = login(self.s), login(self.p)
+        self.ic = mk_course(self.trainer, title="InCamp 1", course_type="in_camp", orientation_camp=self.camp,
+                            stream=self.stream)
+        self.pc = mk_course(self.post_trainer, title="Post 1", course_type="post_camp")
+
+    def test_incamp_corper_sees_only_incamp_courses(self):
         r = self.c.get("/api/incamp/courses/").json()
         self.assertEqual([c["title"] for c in r["courses"]], ["InCamp 1"])
+        self.assertEqual([c["title"] for c in self.c.get("/api/courses/").json()["courses"]], ["InCamp 1"])
 
-    def test_catalogue_includes_both_types_with_filter(self):
-        both = {c["title"] for c in self.c.get("/api/courses/").json()["courses"]}
-        self.assertEqual(both, {"InCamp 1", "Post 1"})
-        only = [c["title"] for c in self.c.get("/api/courses/?courseType=post_camp").json()["courses"]]
-        self.assertEqual(only, ["Post 1"])
+    def test_postcamp_corper_sees_only_postcamp_courses(self):
+        self.assertEqual([c["title"] for c in self.pcl.get("/api/courses/").json()["courses"]], ["Post 1"])
+        self.assertEqual(self.pcl.get("/api/incamp/courses/").status_code, 403)
+        # anonymous visitors only ever see the Post-Camp catalogue
+        from django.test import Client
+        self.assertEqual([c["title"] for c in Client().get("/api/courses/").json()["courses"]], ["Post 1"])
 
-    def test_same_enrolment_system_for_both_types(self):
-        for c in (self.ic, self.pc):
-            self.assertIn(post(self.c, f"/api/courses/{c.public_id}/enroll/").status_code, (200, 201))
+    def test_tracks_cannot_enrol_in_each_other(self):
+        self.assertEqual(post(self.c, f"/api/courses/{self.pc.public_id}/enroll/").status_code, 403)
+        self.assertEqual(post(self.pcl, f"/api/courses/{self.ic.public_id}/enroll/").status_code, 403)
+        self.assertEqual(self.c.get(f"/api/courses/{self.pc.public_id}/").status_code, 403)
+        self.assertEqual(self.pcl.get(f"/api/courses/{self.ic.public_id}/").status_code, 403)
+        self.assertIn(post(self.c, f"/api/courses/{self.ic.public_id}/enroll/").status_code, (200, 201))
+        self.assertIn(post(self.pcl, f"/api/courses/{self.pc.public_id}/enroll/").status_code, (200, 201))
 
-    def test_ended_incamp_access_blocks_incamp_only(self):
-        Profile.objects.filter(user=self.s).update(in_camp_access_active=False)
-        self.assertEqual(self.c.get("/api/incamp/courses/").json()["courses"], [])
+    def test_incamp_corper_only_gets_own_stream(self):
+        from .helpers import mk_stream
+        other = mk_stream(2, start=30, end=60)
+        far = mk_course(self.trainer, title="Other stream", course_type="in_camp", stream=other)
+        self.assertEqual([c["title"] for c in self.c.get("/api/incamp/courses/").json()["courses"]], ["InCamp 1"])
+        self.assertEqual(self.c.get(f"/api/courses/{far.public_id}/").status_code, 403)
+
+    def test_ended_stream_switches_the_account_off(self):
+        from datetime import timedelta
+        from django.utils.timezone import now
+        self.stream.end_date = now().date() - timedelta(days=1)
+        self.stream.save()
+        r = self.c.get("/api/incamp/courses/")
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("has ended", r.json()["detail"])
         self.assertEqual(post(self.c, f"/api/courses/{self.ic.public_id}/enroll/").status_code, 403)
-        self.assertIn(post(self.c, f"/api/courses/{self.pc.public_id}/enroll/").status_code, (200, 201))
+        # the expiry state itself stays reachable
+        self.assertEqual(self.c.get("/api/auth/me/").json()["user"]["lifecycle"]["state"], "expired")
+        self.assertEqual(self.c.get("/api/incamp/dashboard/").status_code, 200)
+        self.assertEqual(self.c.get("/api/my-courses/").status_code, 403)
+
+    def test_incamp_corper_cannot_use_trainer_connections(self):
+        self.assertEqual(self.c.get("/api/trainers/").status_code, 403)
+        self.assertEqual(self.pcl.get("/api/trainers/").status_code, 200)
 
 
 @override_settings(PRIVATE_MEDIA_ROOT=TMP)

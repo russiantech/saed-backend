@@ -7,7 +7,12 @@ from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 
-from ..models import Course, Lesson, Profile
+from datetime import timedelta
+
+from django.utils.timezone import now
+
+from ..models import Course, Lesson, Profile, Stream
+from ..services import streams as stream_svc
 
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2048
 PDF = b"%PDF-1.4\n" + b"0" * 512
@@ -22,6 +27,22 @@ def mk_user(email, role, **profile):
         defaults.update(is_email_verified=True)
     defaults.update(profile)
     Profile.objects.create(user=u, **defaults)
+    return u
+
+
+def mk_stream(number=1, *, year=None, start=-10, end=20, grace=0, **kw):
+    """A stream whose window is [today+start, today+end] days (negative start = already running)."""
+    today = now().date()
+    d = dict(year=year or today.year, number=number, start_date=today + timedelta(days=start),
+             end_date=today + timedelta(days=end), deactivation_grace_days=grace)
+    d.update(kw)
+    return Stream.objects.create(**d)
+
+
+def mk_incamp(email, role, stream, **profile):
+    """An In-Camp corps member / trainer with a live membership in `stream`."""
+    u = mk_user(email, role, account_mode="in_camp", **profile)
+    stream_svc.join_stream(u, stream, role)
     return u
 
 

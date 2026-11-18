@@ -9,14 +9,15 @@ In-Camp SAED views:
 from datetime import date, datetime, time, timedelta
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils.dateparse import parse_date, parse_time
 from django.utils.timezone import now
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ..models import Course, OrientationCamp, Profile
-from ..services import access
+from ..models import Course, OrientationCamp, Profile, Stream
+from ..services import access, streams as stream_svc
 from .base import (
     HasRole,
     IsAuthenticatedAPI,
@@ -106,6 +107,8 @@ def orientation_camp_payload(camp):
         "endDate": _iso_date(end),
         "deactivationGraceDays": camp.deactivation_grace_days,
         "deactivationDate": _iso_date(deactivation),
+        "streamId": camp.stream_id,
+        "streamName": camp.stream.name if camp.stream_id else None,
         "isActive": camp.is_active,
         "createdAt": created.isoformat() if created and hasattr(created, "isoformat") else (str(created) if created else None),
     }
@@ -119,7 +122,10 @@ class PublicOrientationCampsView(APIView):
     permission_classes = []
 
     def get(self, request):
-        camps = OrientationCamp.objects.filter(is_active=True).order_by("-start_date")
+        camps = OrientationCamp.objects.filter(is_active=True).select_related("stream").order_by("-start_date")
+        sid = request.GET.get("streamId", "")
+        if sid.isdigit():
+            camps = camps.filter(stream_id=int(sid))
         return Response({"camps": [orientation_camp_payload(c) for c in camps]})
 
 
@@ -128,8 +134,11 @@ class ManageOrientationCampsView(APIView):
 
     def get(self, request):
         from django.db.models import Count
-        camps = OrientationCamp.objects.annotate(
+        camps = OrientationCamp.objects.select_related("stream").annotate(
             _courses=Count("courses", distinct=True), _corpers=Count("corps_members", distinct=True)).order_by("-start_date", "-id")
+        sid = request.GET.get("streamId", "")
+        if sid.isdigit():
+            camps = camps.filter(stream_id=int(sid))
         out = []
         for c in camps:
             d = orientation_camp_payload(c)
@@ -165,7 +174,14 @@ class ManageOrientationCampsView(APIView):
         if OrientationCamp.objects.filter(name__iexact=name, state__iexact=state, start_date=start).exists():
             return Response({"error": "This camp (same name, state and start date) already exists."},
                             status=status.HTTP_409_CONFLICT)
+        stream = None
+        if data.get("streamId"):
+            stream = Stream.objects.filter(pk=data.get("streamId") if str(data.get("streamId")).isdigit() else 0).first()
+            if stream is None:
+                return Response({"error": "Stream not found.", "fields": {"streamId": "Stream not found."}},
+                                status=status.HTTP_400_BAD_REQUEST)
         camp = OrientationCamp.objects.create(
+            stream=stream,
             name=name,
             state=state,
             location=(data.get("location") or "").strip(),
@@ -212,6 +228,14 @@ class ManageOrientationCampDetailView(APIView):
                 camp.deactivation_grace_days = int(data.get("deactivationGraceDays"))
             except (TypeError, ValueError):
                 pass
+        if "streamId" in data:
+            if data.get("streamId") in (None, ""):
+                camp.stream = None
+            else:
+                st = Stream.objects.filter(pk=data.get("streamId") if str(data.get("streamId")).isdigit() else 0).first()
+                if st is None:
+                    return Response({"error": "Stream not found."}, status=status.HTTP_400_BAD_REQUEST)
+                camp.stream = st
         if "isActive" in data:
             camp.is_active = bool(data.get("isActive"))
         if camp.end_date and camp.start_date and camp.end_date < camp.start_date:
@@ -251,28 +275,42 @@ class InCampCoursesView(APIView):
     def get(self, request):
         role = access.role_of(request.user)
         camps = OrientationCamp.objects.filter(is_active=True).order_by("-start_date")
-        camps_payload = [{"id": k.id, "name": k.name, "state": k.state} for k in camps]
+        camps_payload = [{"id": k.id, "name": k.name, "state": k.state, "streamId": k.stream_id} for k in camps]
         base = {"role": role, "accessActive": True, "orientationCamp": None}
         qs = Course.objects.filter(course_type="in_camp", is_active=True)
         enrolled = set()
         skills = program_categories_payload()
         labels = {s["value"]: s["label"] for s in skills}
         my_skills = []
+        lc = None
+        if role in ("corps_member", "trainer"):
+            if stream_svc.track_of(request.user) != stream_svc.IN_CAMP:
+                return Response({"error": "In-Camp SAED is only available to In-Camp accounts."},
+                                status=status.HTTP_403_FORBIDDEN)
+            lc = stream_svc.lifecycle(request.user)
+            base["lifecycle"], base["stream"] = lc, lc.get("stream")
         if role == "corps_member":
             profile = getattr(request.user, "profile", None)
             if profile is None:
                 return Response({"error": "Profile not found."}, status=status.HTTP_404_NOT_FOUND)
-            base = {"role": role, "accessActive": profile.in_camp_access_active,
-                    "orientationCamp": orientation_camp_payload(profile.orientation_camp) if profile.orientation_camp else None}
-            if not profile.in_camp_access_active:
-                return Response({**base, "message": "Your In-Camp access has ended. Post-Camp courses remain available.",
+            base.update(accessActive=lc["isActive"],
+                        orientationCamp=orientation_camp_payload(profile.orientation_camp) if profile.orientation_camp else None)
+            if not lc["isActive"]:
+                return Response({**base, "message": "Your In-Camp stream has ended, so your In-Camp account is deactivated.",
                                  "courses": [], "camps": camps_payload, "skills": skills,
                                  "pagination": {"page": 1, "pageSize": 12, "total": 0, "totalPages": 1}})
-            qs = qs.filter(is_published=True, is_restricted=False)
+            qs = qs.filter(is_published=True, is_restricted=False, approval_status="approved") \
+                .filter(Q(stream_id__in=lc["streamIds"]) | Q(stream__isnull=True))
             enrolled = set(request.user.course_enrollments.filter(status="confirmed").values_list("course_id", flat=True))
             my_skills = profile_skill_keys(profile)
+            camps_payload = [k for k in camps_payload if k["streamId"] in lc["streamIds"] or k["streamId"] is None]
         elif role == "trainer":
             qs = qs.filter(trainer=request.user)
+            base["accessActive"] = lc["isActive"]
+            if not lc["isActive"]:
+                return Response({**base, "message": "Your In-Camp stream has ended, so your trainer account is deactivated.",
+                                 "courses": [], "camps": camps_payload, "skills": skills,
+                                 "pagination": {"page": 1, "pageSize": 12, "total": 0, "totalPages": 1}})
         qs = filter_catalogue(request, qs)
 
         # Skill set handling. `skill` may be: "" / "mine" (default: the corps member's own skill set), "all",
@@ -311,39 +349,22 @@ class InCampCoursesView(APIView):
             "skillMode": mode,
             "selectedSkill": {"value": specific, "label": labels.get(specific, specific)} if specific else None,
             "noSkillMatch": no_match,
+            "streams": [stream_svc.stream_payload(x) for x in stream_svc.open_streams()] if role in ("saed_admin", "dunis_admin") else [],
         })
 
 
 # ─── Automatic In-Camp Deactivation ──────────────────────────────────────────
 
 def deactivate_expired_in_camp_accounts():
+    """Switch off In-Camp trainer and corps-member accounts whose stream (plus grace) has ended.
+
+    Life-cycle is per stream. Returns the number of memberships deactivated. Nothing is deleted.
     """
-    Background-safe function: deactivate In-Camp access for corps members
-    whose orientation camp ended + grace period has passed.
-    Does NOT delete accounts or touch Post-Camp access.
-    Call from management command / celery / cron.
-    """
-    today = now().date()
-    deactivated = 0
-    camps = OrientationCamp.objects.filter(is_active=True)
-    for camp in camps:
-        if not camp.is_past_deactivation():
-            continue
-        qs = Profile.objects.filter(
-            role="corps_member",
-            orientation_camp=camp,
-            in_camp_access_active=True,
-        )
-        count = qs.update(
-            in_camp_access_active=False,
-            in_camp_deactivated_at=now(),
-        )
-        deactivated += count
-        _log_info(
-            f"Deactivated {count} In-Camp accounts for camp {camp.name}",
-            extra={"camp_id": camp.id, "deactivation_date": str(camp.deactivation_date)},
-        )
-    return deactivated
+    counts = stream_svc.expire_memberships()
+    total = sum(counts.values())
+    if total:
+        _log_info(f"Deactivated {total} In-Camp memberships ({counts})")
+    return total
 
 
 class RunInCampDeactivationView(APIView):

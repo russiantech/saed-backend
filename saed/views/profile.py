@@ -114,7 +114,7 @@ class UpdateProfileView(APIView):
             return Response({"error": "Profile update failed."},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        return Response({"user": user_payload(user, request)})
+        return Response({"user": user_payload(user, request, lifecycle_info=True)})
 
 
 class PartnershipLetterView(APIView):

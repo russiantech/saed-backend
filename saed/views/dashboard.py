@@ -37,7 +37,8 @@ class DashboardView(APIView):
 
             if user_role == "corps_member":
                 from django.db.models import Count, Q
-                enrollments = CourseEnrollment.objects.filter(student=user)
+                from ..services.streams import track_of
+                enrollments = CourseEnrollment.objects.filter(student=user, course__course_type=track_of(user) or "post_camp")
                 agg = enrollments.aggregate(total=Count("id"), pending=Count("id", filter=Q(status="pending")),
                                             approved=Count("id", filter=Q(status="confirmed")))
                 payload["stats"] = {

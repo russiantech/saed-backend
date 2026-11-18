@@ -60,7 +60,7 @@ def csrf(request):
 def me(request):
     if not request.user.is_authenticated:
         return _JsonResponse({"user": None})
-    return _JsonResponse({"user": user_payload(request.user, request)})
+    return _JsonResponse({"user": user_payload(request.user, request, lifecycle_info=True)})
 
 
 # Auth views (DRF APIViews)
@@ -88,7 +88,7 @@ from .users import ManageUsersView, ManageUserDetailView
 # Courses
 from .courses import (
     CourseListView, ManageCoursesView, ManageCourseDetailView, MyEnrollmentsView, CourseEnrollView,
-    AdminCoursesView, RestrictCourseView, UnrestrictCourseView, CourseDetailView,
+    AdminCoursesView, ReviewCourseView, RestrictCourseView, UnrestrictCourseView, CourseDetailView,
     CourseProgressView, LessonCompleteView, CourseEnrollmentStatusView,
 )
 
@@ -138,6 +138,12 @@ from .incamp import (
     PublicOrientationCampsView,
     ManageOrientationCampsView, ManageOrientationCampDetailView,
     InCampCoursesView, RunInCampDeactivationView,
+)
+
+from .streams import (
+    PublicStreamsView, ManageStreamsView, ManageStreamDetailView, StreamTrainersView, StreamTrainerDetailView,
+    StreamTrainerReactivateView, StreamTrainerDeactivateView, StreamTrainerInviteView, RunStreamExpiryView,
+    InCampDashboardView, StreamReportView, StreamReportExportView,
 )
 
 from .bank import ResolveBankAccountView, ListPaystackBanksView, TrainerBankAccountView

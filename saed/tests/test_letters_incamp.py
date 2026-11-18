@@ -6,7 +6,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 
 from ..models import Profile
-from .helpers import PDF, login, mk_course, mk_lesson, mk_user, pdf
+from .helpers import PDF, login, mk_course, mk_incamp, mk_lesson, mk_stream, mk_user, pdf
 
 PRIV = tempfile.mkdtemp(prefix="saed-priv-")
 PUB = tempfile.mkdtemp(prefix="saed-pub-")
@@ -158,14 +158,15 @@ class LessonDocumentFormatTests(TestCase):
 
 class InCampConsistencyTests(TestCase):
     def setUp(self):
-        self.t1 = mk_user("t1@x.com", "trainer")
-        self.t2 = mk_user("t2@x.com", "trainer")
-        self.s = mk_user("s@x.com", "corps_member")
+        self.stream = mk_stream(1)
+        self.t1 = mk_incamp("t1@x.com", "trainer", self.stream)
+        self.t2 = mk_incamp("t2@x.com", "trainer", self.stream)
+        self.s = mk_incamp("s@x.com", "corps_member", self.stream)
         self.admin = mk_user("a@x.com", "saed_admin")
-        self.mine = mk_course(self.t1, title="Mine InCamp", course_type="in_camp")
-        self.draft = mk_course(self.t1, title="Draft InCamp", course_type="in_camp", is_published=False)
-        self.post_camp = mk_course(self.t1, title="Mine PostCamp", course_type="post_camp")
-        self.theirs = mk_course(self.t2, title="Theirs InCamp", course_type="in_camp")
+        kw = dict(course_type="in_camp", stream=self.stream)
+        self.mine = mk_course(self.t1, title="Mine InCamp", **kw)
+        self.draft = mk_course(self.t1, title="Draft InCamp", is_published=False, **kw)
+        self.theirs = mk_course(self.t2, title="Theirs InCamp", **kw)
 
     def titles(self, user):
         r = login(user).get("/api/incamp/courses/")
@@ -193,10 +194,12 @@ class InCampSkillSetTests(TestCase):
     """Skill-set filter + 'own skill set first' for the In-Camp catalogue."""
 
     def setUp(self):
-        self.t = mk_user("t@x.com", "trainer")
-        self.ict = mk_course(self.t, title="ICT A", category="ict", course_type="in_camp")
-        self.agro = mk_course(self.t, title="Agro A", category="agro_allied", course_type="in_camp")
-        self.cater = mk_course(self.t, title="Cater A", category="culinary_catering", course_type="in_camp")
+        self.stream = mk_stream(1)
+        self.t = mk_incamp("t@x.com", "trainer", self.stream)
+        kw = dict(course_type="in_camp", stream=self.stream)
+        self.ict = mk_course(self.t, title="ICT A", category="ict", **kw)
+        self.agro = mk_course(self.t, title="Agro A", category="agro_allied", **kw)
+        self.cater = mk_course(self.t, title="Cater A", category="culinary_catering", **kw)
 
     def get(self, user, qs=""):
         r = login(user).get(f"/api/incamp/courses/{qs}")
@@ -204,7 +207,7 @@ class InCampSkillSetTests(TestCase):
         return r.json()
 
     def corper(self, **p):
-        return mk_user(f"c{Profile.objects.count()}@x.com", "corps_member", **p)
+        return mk_incamp(f"c{Profile.objects.count()}@x.com", "corps_member", self.stream, **p)
 
     def test_own_skill_set_first_with_labels_or_keys(self):
         # profiles store display labels from the signup form; legacy/keys must work too
@@ -262,8 +265,8 @@ class InCampSkillSetTests(TestCase):
     def test_pagination_keeps_matches_first(self):
         s = self.corper(skill_interests=["Education"], skill_interest="Education")
         for i in range(14):
-            mk_course(self.t, title=f"Other {i}", category="ict", course_type="in_camp")
-        mk_course(self.t, title="Edu Z", category="education", course_type="in_camp")
+            mk_course(self.t, title=f"Other {i}", category="ict", course_type="in_camp", stream=self.stream)
+        mk_course(self.t, title="Edu Z", category="education", course_type="in_camp", stream=self.stream)
         self.assertEqual(self.get(s)["courses"][0]["title"], "Edu Z")
 
 
@@ -271,14 +274,19 @@ class PerformanceGuardTests(TestCase):
     """Query-count budgets: these endpoints must not regress to N+1."""
 
     def setUp(self):
-        self.t = mk_user("pt@x.com", "trainer")
-        self.s = mk_user("ps@x.com", "corps_member")
+        from ..models import CourseEnrollment
+        self.stream = mk_stream(1)
+        self.t = mk_user("pt@x.com", "trainer")                         # Post-Camp trainer
+        self.it = mk_incamp("pit@x.com", "trainer", self.stream)        # In-Camp trainer
+        self.s = mk_user("ps@x.com", "corps_member")                    # Post-Camp corps member
+        self.ic = mk_incamp("pic@x.com", "corps_member", self.stream)   # In-Camp corps member
         for i in range(8):
-            c = mk_course(self.t, title=f"C{i}", course_type="in_camp" if i % 2 else "post_camp")
+            in_camp = bool(i % 2)
+            c = mk_course(self.it if in_camp else self.t, title=f"C{i}", course_type="in_camp" if in_camp else "post_camp",
+                          stream=self.stream if in_camp else None)
             for j in range(3):
                 mk_lesson(c, title=f"L{j}", order=j)
-            from ..models import CourseEnrollment
-            CourseEnrollment.objects.create(student=self.s, course=c, status="confirmed")
+            CourseEnrollment.objects.create(student=self.ic if in_camp else self.s, course=c, status="confirmed")
 
     def budget(self, user, path, limit):
         from django.db import connection
@@ -292,14 +300,17 @@ class PerformanceGuardTests(TestCase):
 
     def test_query_budgets(self):
         for path, limit in (("/api/trainers/", 10), ("/api/dashboard/", 14), ("/api/my-courses/", 12),
-                            ("/api/incamp/courses/", 12), ("/api/courses/", 8)):
+                            ("/api/courses/", 8)):
             self.budget(self.s, path, limit)
+        for path, limit in (("/api/incamp/courses/", 16), ("/api/incamp/dashboard/", 18), ("/api/my-courses/", 14)):
+            self.budget(self.ic, path, limit)
+        self.budget(self.it, "/api/incamp/dashboard/", 16)
 
     def test_course_detail_of_in_camp_course_works_for_every_role(self):
         from ..models import Course
         camp_course = Course.objects.filter(course_type="in_camp").first()
         admin = mk_user("pa@x.com", "saed_admin")
-        for u in (self.s, self.t, admin):
+        for u in (self.ic, self.it, admin):
             r = login(u).get(f"/api/courses/{camp_course.public_id}/")
             self.assertEqual(r.status_code, 200, r.content[:200])
             self.assertNotIn("sessions", r.json())

@@ -19,6 +19,7 @@ from django.http.multipartparser import MultiPartParser, MultiPartParserError
 from django.utils.timezone import now
 
 from ..models import Connection, Course, CourseEnrollment, Notification, Profile
+from ..services.streams import is_in_camp_active, lifecycle, lifecycle_blocked
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LOGGING
@@ -172,12 +173,20 @@ def _parse_multipart(request):
 # DRF PERMISSION CLASSES
 # ═══════════════════════════════════════════════════════════════════════════════
 from rest_framework.permissions import BasePermission
-from rest_framework.exceptions import NotAuthenticated
+from rest_framework.exceptions import NotAuthenticated, PermissionDenied
+
+
+def _raise_if_stream_over(request):
+    """Expired In-Camp accounts are switched off server-side (not just hidden in the UI)."""
+    msg = lifecycle_blocked(request)
+    if msg:
+        raise PermissionDenied(msg, code="stream_expired")
 
 
 class IsAuthenticatedAPI(BasePermission):
     def has_permission(self, request, view):
         if request.user and request.user.is_authenticated:
+            _raise_if_stream_over(request)
             return True
         raise NotAuthenticated("Your session has expired. Please sign in again.")
 
@@ -196,10 +205,28 @@ def HasRole(*roles):
                     f"denied access to {request.path}"
                 )
                 return False
+            _raise_if_stream_over(request)
             return True
     _HasRole.__name__ = f"HasRole_{'_'.join(roles)}"
     _HasRole.roles = tuple(roles)
     return _HasRole
+
+
+def HasRoleTrack(role, track):
+    """HasRole(role) plus a programme check: In-Camp and Post-Camp accounts never reach each other's features."""
+    base = HasRole(role)
+
+    class _HasRoleTrack(base):
+        def has_permission(self, request, view):
+            if not super().has_permission(request, view):
+                return False
+            from ..services.streams import track_of
+            if track_of(request.user) != track:
+                label = "Post-Camp" if track == "post_camp" else "In-Camp"
+                raise PermissionDenied(f"This feature belongs to the {label} programme.", code="wrong_track")
+            return True
+    _HasRoleTrack.__name__ = f"HasRoleTrack_{role}_{track}"
+    return _HasRoleTrack
 
 
 class IsAuthorizedTrainer(BasePermission):
@@ -311,7 +338,7 @@ def _has_payout(profile):
     return bool(profile and (profile.paystack_subaccount_code or (profile.account_number and profile.bank_code)))
 
 
-def user_payload(user, request=None):
+def user_payload(user, request=None, lifecycle_info=False):
     profile = getattr(user, "profile", None)
     p = profile
     return {
@@ -350,8 +377,12 @@ def user_payload(user, request=None):
         "restrictedAt": p.restricted_at.isoformat() if p and p.restricted_at else None,
         "ppa": p.ppa if p else "",
         "accountMode": p.account_mode if p else "post_camp",
+        "track": p.account_mode if p and p.account_mode == "in_camp" else "post_camp",
         "orientationCampId": p.orientation_camp_id if p else None,
-        "inCampAccessActive": p.in_camp_access_active if p else True,
+        "inCampAccessActive": (is_in_camp_active(user) if lifecycle_info else p.in_camp_access_active)
+        if p and p.account_mode == "in_camp" else True,
+        # Stream window (computed per account, so only requested for the signed-in user, never in bulk lists).
+        "lifecycle": lifecycle(user) if lifecycle_info and p and p.role in ("corps_member", "trainer") else None,
         "bankName": p.bank_name if p else "",
         "bankCode": p.bank_code if p else "",
         "accountNumber": p.account_number if p else "",
@@ -427,7 +458,7 @@ def annotate_courses(qs):
         rows = model.objects.filter(course=OuterRef("pk"), **flt).order_by().values("course").annotate(n=Count("pk")).values("n")
         return Coalesce(Subquery(rows, output_field=IntegerField()), Value(0))
 
-    return qs.select_related("trainer", "trainer__profile", "orientation_camp").annotate(
+    return qs.select_related("trainer", "trainer__profile", "orientation_camp", "stream").annotate(
         _lesson_count=sub(Lesson, is_published=True),
         _paid_count=sub(Lesson, is_published=True, is_locked=True, price__gt=0),
         _enrolled_count=sub(CourseEnrollment, status="confirmed"),
@@ -514,6 +545,11 @@ def course_payload(course, request=None):
         "trainingLga": course.training_lga or "",
         "trainingState": course.training_state or "",
         "isPublished": course.is_published,
+        "streamId": course.stream_id,
+        "stream": {"id": course.stream.id, "name": course.stream.name, "year": course.stream.year,
+                   "number": course.stream.number} if course.stream_id else None,
+        "approvalStatus": course.approval_status,
+        "reviewNote": course.review_note or "",
         "lessonCount": lesson_count,
         "paidLessonCount": paid_count,
         "freeLessonCount": max(lesson_count - paid_count, 0),

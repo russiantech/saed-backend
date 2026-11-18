@@ -36,11 +36,10 @@ class Profile(models.Model):
         ("removed", "Removed"),
         ("restricted", "Restricted"),
     ]
-    # In-Camp vs Post-Camp account mode for corps members
+    # Which programme the account belongs to. In-Camp and Post-Camp are separate tracks that never mix.
     ACCOUNT_MODE_CHOICES = [
         ("in_camp", "In-Camp"),
         ("post_camp", "Post-Camp"),
-        ("both", "Both"),
     ]
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -123,6 +122,72 @@ class Profile(models.Model):
         return f"{self.user.get_full_name() or self.user.username} ({self.role})"
 
 
+class Stream(models.Model):
+    """One NYSC orientation stream (up to six per year). Every In-Camp account and course lives inside one stream."""
+    year = models.PositiveSmallIntegerField()
+    number = models.PositiveSmallIntegerField()  # 1..6
+    label = models.CharField(max_length=80, blank=True)  # e.g. "October – November"
+    start_date = models.DateField()
+    end_date = models.DateField()
+    # Days after end_date before the stream's accounts switch off (0 = the day after end_date).
+    deactivation_grace_days = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="streams_created")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-year", "-number"]
+        constraints = [models.UniqueConstraint(fields=["year", "number"], name="uniq_stream_year_number")]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def name(self):
+        return f"{self.year} Stream {self.number}" + (f" ({self.label})" if self.label else "")
+
+    @property
+    def deactivation_date(self):
+        from datetime import timedelta
+        return self.end_date + timedelta(days=self.deactivation_grace_days)
+
+    def is_past_deactivation(self, today=None):
+        return (today or now().date()) > self.deactivation_date
+
+    def status(self, today=None):
+        today = today or now().date()
+        if not self.is_active:
+            return "closed"
+        if today < self.start_date:
+            return "upcoming"
+        if today <= self.end_date:
+            return "running"
+        return "grace" if today <= self.deactivation_date else "ended"
+
+
+class StreamMembership(models.Model):
+    """A trainer's or In-Camp corps member's account window inside one stream (life-cycle is per stream)."""
+    STATUS_CHOICES = [("active", "Active"), ("expired", "Expired"), ("deactivated", "Deactivated")]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="stream_memberships")
+    stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name="memberships")
+    role = models.CharField(max_length=24, choices=[("corps_member", "Corps Member"), ("trainer", "Trainer")])
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="active")
+    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    deactivated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "stream"], name="uniq_membership_user_stream")]
+        indexes = [models.Index(fields=["stream", "role", "status"]), models.Index(fields=["user", "status"])]
+
+    def __str__(self):
+        return f"{self.user_id} @ {self.stream_id} ({self.status})"
+
+
 class OrientationCamp(models.Model):
     """Official NYSC orientation camp period used for In-Camp SAED."""
     name = models.CharField(max_length=120)  # e.g. "Lagos Orientation Camp Batch A 2026"
@@ -132,6 +197,7 @@ class OrientationCamp(models.Model):
     end_date = models.DateField()
     # Grace period after end_date before auto-deactivation (default 7 days)
     deactivation_grace_days = models.PositiveSmallIntegerField(default=7)
+    stream = models.ForeignKey("Stream", on_delete=models.SET_NULL, null=True, blank=True, related_name="camps")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -230,10 +296,19 @@ class Course(models.Model):
     training_lga = models.CharField(max_length=80, blank=True)
     training_state = models.CharField(max_length=80, blank=True)
     is_published = models.BooleanField(default=False)
+    # In-Camp courses belong to one stream and are proposed by trainers, then opened (approved) by SAED admin.
+    stream = models.ForeignKey("Stream", on_delete=models.SET_NULL, null=True, blank=True, related_name="courses")
+    APPROVAL_CHOICES = [("pending", "Pending review"), ("approved", "Approved"), ("declined", "Declined")]
+    approval_status = models.CharField(max_length=16, choices=APPROVAL_CHOICES, default="approved")
+    review_note = models.CharField(max_length=500, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name="+")
 
     class Meta:
         ordering = ["-created_at"]
         indexes = [
+            models.Index(fields=["stream", "course_type", "approval_status"]),
             models.Index(fields=["course_type", "is_published", "is_active"]),
             models.Index(fields=["trainer", "course_type"]),
             models.Index(fields=["-created_at"]),

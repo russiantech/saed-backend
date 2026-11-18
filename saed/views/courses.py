@@ -12,7 +12,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from ..models import Connection, Course, CourseEnrollment, Lesson, LessonProgress, OrientationCamp
-from ..services import access
+from ..models import Stream
+from ..services import access, streams as stream_svc
 from ..services.notify import course_link, notify
 from .base import (
     HasRole, IsAuthenticatedAPI, _log_error, _parse_date, _resolve_course_dates, _safe_int,
@@ -67,6 +68,12 @@ def filter_catalogue(request, qs):
     camp = (g.get("campId") or g.get("camp") or "").strip()
     if camp.isdigit():
         qs = qs.filter(orientation_camp_id=int(camp))
+    stream_id = (g.get("streamId") or g.get("stream") or "").strip()
+    if stream_id.isdigit():
+        qs = qs.filter(stream_id=int(stream_id))
+    approval = (g.get("approval") or "").strip()
+    if approval in ("pending", "approved", "declined"):
+        qs = qs.filter(approval_status=approval)
     trainer = (g.get("trainerId") or "").strip()
     if trainer.isdigit():
         qs = qs.filter(trainer_id=int(trainer))
@@ -94,6 +101,15 @@ class CourseListView(APIView):
     def get(self, request):
         try:
             qs = filter_catalogue(request, visible_courses())
+            user = request.user
+            if not (user.is_authenticated and access.is_admin(user)):
+                # People only ever see their own programme. Anonymous visitors and Post-Camp accounts: Post-Camp
+                # courses; In-Camp accounts: In-Camp courses of their running stream (the In-Camp page is the home).
+                if stream_svc.track_of(user) == stream_svc.IN_CAMP:
+                    lc = stream_svc.lifecycle(user)
+                    qs = qs.filter(course_type="in_camp", stream_id__in=lc["streamIds"]) if lc["isActive"] else qs.none()
+                else:
+                    qs = qs.filter(course_type="post_camp")
             qs = annotate_courses(qs).order_by("-created_at", "-id")
             items, pagination = paginate(request, qs)
             return Response({
@@ -162,16 +178,35 @@ class ManageCoursesView(APIView):
     def post(self, request):
         data = _resolve_course_dates(dict(request.data))
         fields = _validate_course(data)
-        course_type = data.get("courseType") or "post_camp"
+        track = stream_svc.track_of(request.user) or "post_camp"
+        course_type = data.get("courseType") or track
+        if course_type != track:
+            return Response({"error": f"{'In-Camp' if track == 'in_camp' else 'Post-Camp'} trainers can only create "
+                                      f"{'In-Camp' if track == 'in_camp' else 'Post-Camp'} courses."},
+                            status=status.HTTP_403_FORBIDDEN)
+        stream = None
+        if track == "in_camp":
+            lc = stream_svc.lifecycle(request.user)
+            ids = lc.get("streamIds") or []
+            wanted = _safe_int(data.get("streamId"), 0) or (ids[0] if ids else 0)
+            if wanted not in ids:
+                return Response({"error": "Choose one of your active streams for this In-Camp course."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            stream = Stream.objects.get(pk=wanted)
         camp = None
         camp_id = data.get("orientationCampId") or None
         if camp_id:
             camp = OrientationCamp.objects.filter(pk=camp_id).first()
             if not camp:
                 fields["orientationCampId"] = "Orientation camp not found."
+            elif stream is not None and camp.stream_id not in (None, stream.id):
+                fields["orientationCampId"] = "This camp belongs to a different stream."
         start, end = _parse_date(data.get("startDate")), _parse_date(data.get("endDate"))
-        if course_type == "in_camp" and camp:
-            start, end = start or camp.start_date, end or camp.end_date
+        if course_type == "in_camp":
+            if camp:
+                start, end = start or camp.start_date, end or camp.end_date
+            elif stream is not None:
+                start, end = start or stream.start_date, end or stream.end_date
         if not start:
             fields["startDate"] = "Start date is required."
         if not end:
@@ -196,11 +231,20 @@ class ManageCoursesView(APIView):
                     training_location=(data.get("trainingLocation") or "").strip(),
                     training_lga=(data.get("trainingLga") or "").strip(),
                     training_state=(data.get("trainingState") or "").strip(),
-                    is_published=bool(data.get("isPublished", False)),
+                    # In-Camp courses are proposals: SAED admin "opens" (approves + publishes) them for the stream.
+                    is_published=bool(data.get("isPublished", False)) and course_type != "in_camp",
+                    stream=stream,
+                    approval_status="pending" if course_type == "in_camp" else "approved",
                     location=(data.get("location") or data.get("trainingLocation") or "Lagos")[:120],
                 )
             if course.is_published:
                 announce_course_published(course)
+            if course.course_type == "in_camp":
+                from ..services.notify import notify_admins
+                notify_admins("In-Camp course proposal",
+                              f"{request.user.get_full_name() or request.user.email} proposed “{course.title}” "
+                              f"for {stream.name if stream else 'a stream'}.", reason="course_proposal",
+                              link="/app/proposals")
             return Response({"course": course_payload(course, request)}, status=status.HTTP_201_CREATED)
         except Exception as exc:
             _log_error("Course creation error", exc=exc)
@@ -270,6 +314,13 @@ class ManageCourseDetailView(APIView):
         if course.start_date and course.end_date and course.end_date < course.start_date:
             return Response({"error": "End date must be after start date.", "fields": {"endDate": "End date must be after start date."}},
                             status=status.HTTP_400_BAD_REQUEST)
+        if course.course_type == "in_camp":
+            if course.approval_status != "approved":
+                if course.is_published:
+                    return Response({"error": "This In-Camp course must be opened by SAED admin before it can be published.",
+                                     "fields": {"isPublished": "Awaiting SAED approval."}}, status=status.HTTP_400_BAD_REQUEST)
+                if course.approval_status == "declined":  # editing a declined proposal resubmits it
+                    course.approval_status, course.review_note = "pending", ""
         course.save()
         if course.is_published and not was_published:
             announce_course_published(course)
@@ -294,6 +345,40 @@ class AdminCoursesView(APIView):
         qs = filter_catalogue(request, qs).order_by("-created_at")
         items, pagination = paginate(request, qs, default_size=50, max_size=200)
         return Response({"courses": [course_payload(c, request) for c in items], "pagination": pagination})
+
+
+class ReviewCourseView(APIView):
+    """SAED admin opens (approves + publishes) or declines a trainer's In-Camp course proposal."""
+    permission_classes = [HasRole("saed_admin", "dunis_admin")]
+
+    def post(self, request, course_id):
+        try:
+            course = get_course(course_id)
+        except Course.DoesNotExist:
+            return _not_found()
+        if course.course_type != "in_camp":
+            return Response({"error": "Only In-Camp course proposals are reviewed."}, status=status.HTTP_400_BAD_REQUEST)
+        decision = (request.data.get("decision") or "").strip()
+        note = (request.data.get("note") or "").strip()[:500]
+        if decision not in ("approve", "decline"):
+            return Response({"error": "decision must be 'approve' or 'decline'."}, status=status.HTTP_400_BAD_REQUEST)
+        if decision == "decline" and not note:
+            return Response({"error": "Tell the trainer why the proposal was declined.", "fields": {"note": "Required."}},
+                            status=status.HTTP_400_BAD_REQUEST)
+        was_published = course.is_published
+        course.approval_status = "approved" if decision == "approve" else "declined"
+        course.is_published = decision == "approve"
+        course.review_note, course.reviewed_at, course.reviewed_by = note, now(), request.user
+        course.save(update_fields=["approval_status", "is_published", "review_note", "reviewed_at", "reviewed_by"])
+        if decision == "approve":
+            if not was_published:
+                announce_course_published(course)
+            notify(course.trainer, "In-Camp course opened", f"“{course.title}” was approved and is now open to corps members.",
+                   reason="course_review", link=course_link(course))
+        else:
+            notify(course.trainer, "In-Camp course declined", f"“{course.title}” was declined: {note}",
+                   reason="course_review", link=course_link(course))
+        return Response({"course": course_payload(course, request)})
 
 
 class RestrictCourseView(APIView):
@@ -363,6 +448,9 @@ class CourseDetailView(APIView):
         if not (owner or admin) and (course.is_restricted or not course.is_published):
             return _not_found()
 
+        reason = None if (owner or admin) else access.course_block_reason(user, course)
+        if reason in ("wrong_track", "other_stream"):
+            return Response({"error": access.BLOCK_MESSAGES[reason], "wrongTrack": True}, status=status.HTTP_403_FORBIDDEN)
         enrolled = access.is_enrolled(user, course)
         can_consume = access.can_consume_course(user, course, enrolled=enrolled)
         blocked = access.in_camp_blocked(user, course)
@@ -432,9 +520,7 @@ class MyEnrollmentsView(APIView):
     def get(self, request):
         qs = CourseEnrollment.objects.filter(student=request.user).exclude(status__in=("rejected",)) \
             .select_related("course", "course__trainer", "course__trainer__profile", "course__orientation_camp")
-        ctype = request.GET.get("courseType")
-        if ctype in ("in_camp", "post_camp"):
-            qs = qs.filter(course__course_type=ctype)
+        qs = qs.filter(course__course_type=stream_svc.track_of(request.user) or "post_camp")
         q = (request.GET.get("q") or "").strip()
         if q:
             qs = qs.filter(course__title__icontains=q)
@@ -443,12 +529,13 @@ class MyEnrollmentsView(APIView):
         courses = []
         attach_course_counts([e.course for e in items])
         prog = progress_for(request.user, [e.course_id for e in items])
+        lc = stream_svc.lifecycle(request.user)  # once, not per row
         for e in items:
             payload = course_payload(e.course, request)
             payload["enrollmentStatus"] = e.status
             payload["enrolledAt"] = e.enrolled_at.isoformat() if e.enrolled_at else None
             payload["progress"] = prog[e.course_id]
-            payload["inCampBlocked"] = access.in_camp_blocked(request.user, e.course)
+            payload["inCampBlocked"] = access.in_camp_blocked(request.user, e.course, lc)
             courses.append(payload)
         return Response({"courses": courses, "pagination": pagination})
 
@@ -466,9 +553,10 @@ class CourseEnrollView(APIView):
                 is_active=True, is_published=True, is_restricted=False))
         except Course.DoesNotExist:
             return _not_found()
-        if access.in_camp_blocked(request.user, course):
-            return Response({"error": "Your In-Camp access has ended. Post-Camp courses remain available.",
-                             "inCampBlocked": True}, status=status.HTTP_403_FORBIDDEN)
+        reason = access.course_block_reason(request.user, course)
+        if reason:
+            return Response({"error": access.BLOCK_MESSAGES[reason], "inCampBlocked": reason == "expired",
+                             "wrongTrack": reason in ("wrong_track", "other_stream")}, status=status.HTTP_403_FORBIDDEN)
 
         with transaction.atomic():
             enrollment, created = CourseEnrollment.objects.select_for_update().get_or_create(

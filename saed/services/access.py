@@ -1,5 +1,6 @@
 """Who may open which course / lesson. Single source of truth for entitlements."""
 from ..models import CourseEnrollment, Lesson, LessonAccess, Profile
+from . import streams
 
 ADMIN_ROLES = ("saed_admin", "dunis_admin")
 
@@ -21,19 +22,42 @@ def is_enrolled(user, course) -> bool:
     return CourseEnrollment.objects.filter(student=user, course=course, status="confirmed").exists()
 
 
+def course_block_reason(user, course, lc=None):
+    """Why a corps member may not use this course: "wrong_track", "expired", "other_stream" or None (allowed).
+
+    In-Camp and Post-Camp never mix: a corps member only ever sees the programme their account belongs to, and an
+    In-Camp corps member only the courses of the stream they joined, while that stream is still running.
+    """
+    if role_of(user) != "corps_member":
+        return None
+    track = streams.track_of(user)
+    if course.course_type != track:
+        return "wrong_track"
+    if track != streams.IN_CAMP:
+        return None
+    lc = lc or streams.lifecycle(user)
+    if not lc["isActive"]:
+        return "expired"
+    if course.stream_id and course.stream_id not in lc["streamIds"]:
+        return "other_stream"
+    return None
+
+
+BLOCK_MESSAGES = {
+    "wrong_track": "This course belongs to a different programme (In-Camp and Post-Camp are separate).",
+    "expired": "Your In-Camp stream has ended, so your In-Camp account is deactivated.",
+    "other_stream": "This course belongs to another stream.",
+}
+
+
 def in_camp_open_access(user, course) -> bool:
-    """In-Camp courses are open to any corps member whose In-Camp access is active."""
-    if course.course_type != "in_camp" or role_of(user) != "corps_member":
-        return False
-    profile = getattr(user, "profile", None)
-    return bool(profile and profile.in_camp_access_active)
+    """In-Camp courses of the corps member's own (running) stream open without a separate enrolment step."""
+    return (course.course_type == "in_camp" and role_of(user) == "corps_member"
+            and course_block_reason(user, course) is None)
 
 
-def in_camp_blocked(user, course) -> bool:
-    if course.course_type != "in_camp" or role_of(user) != "corps_member":
-        return False
-    profile = getattr(user, "profile", None)
-    return bool(profile and not profile.in_camp_access_active)
+def in_camp_blocked(user, course, lc=None) -> bool:
+    return course_block_reason(user, course, lc) is not None
 
 
 def can_consume_course(user, course, enrolled=None) -> bool:

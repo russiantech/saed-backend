@@ -1,7 +1,7 @@
 """Hand-written documentation layered on top of the introspected OpenAPI spec."""
 import re
 
-API_VERSION = "2.4.0"
+API_VERSION = "2.5.0"
 
 DESCRIPTION = """\
 The SAED API powers the Skills Acquisition & Entrepreneurship Development platform for NYSC corps members,
@@ -43,6 +43,7 @@ TAGS = [
     ("Lessons", "Lesson content, media, access and uploads."),
     ("Payments", "Paystack initialisation, verification, ledger and webhook."),
     ("Dunis Admin", "Platform finance & settings (Dunis administrators)."),
+    ("Streams", "NYSC streams (up to six a year), In-Camp trainer accounts per stream, proposals review and reports."),
     ("Admin", "SAED administration: users, programs, refunds, camps, sessions."),
     ("Notifications", "In-app notifications."),
     ("Banks", "Paystack bank list and account resolution."),
@@ -57,6 +58,7 @@ _TAG_RULES = [
     (r"^(programs|applications|manage/programs|manage/applications)", "Programs"),
     (r"^(trainers|my-trainers|connect|connections|trainer/)", "Trainers"),
     (r"^manage/lessons|^lessons/|^media/|^manage/access-requests", "Lessons"),
+    (r"^(streams|manage/streams|manage/stream-trainers|reports/|admin/run-stream-expiry|incamp/dashboard)", "Streams"),
     (r"^(courses|my-courses|manage/courses|admin/courses|incamp/)", "Courses"),
     (r"^(payments|paystack|webhooks)", "Payments"),
     (r"^dunis/|^admin/platform-settings", "Dunis Admin"),
@@ -89,14 +91,16 @@ PATH_PARAMS = {
     "reference": "Payment reference (e.g. `SAED-...`).", "program_id": "Program id.",
     "trainer_id": "Trainer user id.", "corper_id": "Corps member user id.", "user_id": "User id.",
     "connection_id": "Connection id.", "application_id": "Application id.", "enrollment_id": "Enrollment id.",
-    "notification_id": "Notification id.", "camp_id": "Orientation camp id.", "session_id": "Training session id.",
+    "notification_id": "Notification id.", "stream_id": "Stream id.", "camp_id": "Orientation camp id.", "session_id": "Training session id.",
 }
 
 QUERY_PARAMS = {
     "page": "1-based page number.", "pageSize": "Items per page.", "q": "Free-text search.",
     "search": "Free-text search.", "status": "Filter by status.", "role": "Filter by role.",
     "category": "Filter by category.", "state": "Filter by state.", "lga": "Filter by LGA.",
-    "type": "Filter by type.", "course": "Filter by course id.", "program": "Filter by program id.",
+    "type": "Filter by type.", "streamId": "Filter by stream id.", "year": "Filter by year.",
+    "approval": "Proposal status: `pending`, `approved` or `declined`.", "kind": "Export kind: `corpers`, `trainers` or `courses`.",
+    "track": "`in_camp` or `post_camp`.", "skill": "Skill key or label; `mine` (default for corps members) or `all`.", "course": "Filter by course id.", "program": "Filter by program id.",
 }
 
 FIELDS = {
@@ -225,3 +229,30 @@ OPERATIONS = {
     "GET /banks/": {"summary": "List Paystack banks"},
     "POST /banks/resolve/": {"summary": "Resolve a bank account name"},
 }
+
+
+SD = "Admin (saed_admin / dunis_admin) only."
+OPERATIONS.update({
+    "GET /streams/": {"summary": "Open streams (public)", "description": "Streams a corps member can still join (active and not past their deactivation date), with their camps. Used by the In-Camp sign-up form."},
+    "GET /manage/streams/": {"summary": "List streams", "description": SD + " Optional `year`. Each stream carries counts of camps, courses, corps members, trainers and pending proposals."},
+    "POST /manage/streams/": {"summary": "Create a stream", "created": True,
+        "description": SD + " `year` + `number` (1–6) are unique; `endDate` ≥ `startDate`; `deactivationGraceDays` (0–365) delays account switch-off after `endDate`."},
+    "GET /manage/streams/{stream_id}/": {"summary": "Stream detail"},
+    "PATCH /manage/streams/{stream_id}/": {"summary": "Update a stream", "description": SD + " Changing dates moves the account window of everyone in the stream."},
+    "DELETE /manage/streams/{stream_id}/": {"summary": "Delete an unused stream", "description": SD + " **409** if it has accounts or courses — close it (`isActive: false`) instead."},
+    "GET /manage/stream-trainers/": {"summary": "List In-Camp trainers", "description": SD + " Filters: `streamId`, `state` (`active`/`expired`), `q`."},
+    "POST /manage/stream-trainers/": {"summary": "Create an In-Camp trainer", "created": True,
+        "description": SD + " Creates the account for a stream and e-mails an invitation with a set-password link. `password` is optional (never e-mailed). Fields: `fullName`, `email`, `phone`, `streamId`, optional `specialization`, `bio`, `password`."},
+    "GET /manage/stream-trainers/{user_id}/": {"summary": "In-Camp trainer detail"},
+    "PATCH /manage/stream-trainers/{user_id}/": {"summary": "Correct an In-Camp trainer", "description": SD + " Name, email, phone, skill, bio, or `streamId` to move the live membership to the right stream."},
+    "DELETE /manage/stream-trainers/{user_id}/": {"summary": "Delete an In-Camp trainer", "description": SD + " **409** if the trainer has courses — deactivate instead."},
+    "POST /manage/stream-trainers/{user_id}/reactivate/": {"summary": "Re-activate a trainer for a stream", "description": SD + " Body `{streamId}`. Notifies and e-mails the trainer."},
+    "POST /manage/stream-trainers/{user_id}/deactivate/": {"summary": "Deactivate a trainer", "description": SD + " Optional `{streamId}`; otherwise all live memberships."},
+    "POST /manage/stream-trainers/{user_id}/invite/": {"summary": "Re-send the invitation e-mail"},
+    "POST /admin/run-stream-expiry/": {"summary": "Persist expiry of finished streams", "description": SD + " Same as `manage.py deactivate_incamp`. Expiry is also enforced live from the dates."},
+    "GET /incamp/dashboard/": {"summary": "In-Camp dashboard", "description": "In-Camp corps members and trainers only (**403** otherwise). Returns the stream `lifecycle` (state, dates, days remaining), role stats, recent courses and the upcoming schedule. Still available after the stream ends (then `lifecycle.isActive` is false); every other endpoint returns **403** for an expired In-Camp account."},
+    "POST /manage/courses/{course_id}/review/": {"summary": "Open or decline an In-Camp proposal", "description": SD + " Body `{decision: approve|decline, note}`; a note is required to decline. Approving publishes the course to its stream."},
+    "GET /reports/streams/": {"summary": "Stream report", "description": SD + " Per stream: corps members (total/active/expired, by skill and camp, enrolment engagement), trainers, proposals, enrolments, top courses; plus totals and a separate Post-Camp summary. Filters `streamId`, `year`."},
+    "GET /reports/streams/export/": {"summary": "Download a report as CSV", "description": SD + " `kind` = `corpers`, `trainers` or `courses`; optional `streamId`. Cells that look like formulas are neutralised.",
+        "response": {"description": "CSV file.", "content": {"text/csv": {"schema": {"type": "string"}}}}},
+})
