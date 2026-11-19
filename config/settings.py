@@ -90,7 +90,7 @@ DATABASES = {
         env="DATABASE_URL",
         default=f"sqlite:///{(BASE_DIR / 'db.sqlite3').as_posix()}",
         conn_max_age=env_int("DB_CONN_MAX_AGE", 60),
-        conn_health_checks=True,
+        # conn_health_checks=True,  # TypeError: config() got an unexpected keyword argument 'conn_health_checks' happens on older django versions using dj_database_url
     )
 }
 if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
