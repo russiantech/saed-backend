@@ -1,0 +1,31 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: "py3.13 / Django 5.2 / SQLite",   python: "3.13", reqs: requirements-dev.txt,   db: sqlite}
+          - {name: "py3.13 / Django 5.2 / Postgres", python: "3.13", reqs: requirements-dev.txt,   db: postgres}
+          - {name: "py3.13 / cPanel profile (Django 4.2)", python: "3.13", reqs: requirements-cpanel.txt, db: sqlite, django: "Django>=4.2,<4.3"}
+          - {name: "py3.11 / legacy profile (Django 3.2)", python: "3.11", reqs: requirements-legacy.txt, db: sqlite}
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_PASSWORD: pw, POSTGRES_DB: saed}
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready" --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: ${{ matrix.db == 'postgres' && 'postgres://postgres:pw@localhost:5432/saed' || 'sqlite:///db.sqlite3' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "${{ matrix.python }}", cache: pip}
+      - run: pip install -r ${{ matrix.reqs }} "openapi-spec-validator>=0.7"
+      - if: matrix.django
+        run: pip install "${{ matrix.django }}"
+      - run: python manage.py makemigrations --check --dry-run
+        env: {DJANGO_DEBUG: "1"}
+      - run: python manage.py test

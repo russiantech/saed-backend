@@ -85,18 +85,26 @@ TEMPLATES = [{
 # ── database: DATABASE_URL works for SQLite *and* PostgreSQL ────────────────
 #   sqlite:///db.sqlite3                      (default; development)
 #   postgres://user:pass@host:5432/dbname     (production; add ?sslmode=require for managed databases)
-DATABASES = {
-    "default": dj_database_url.config(
-        env="DATABASE_URL",
-        default=f"sqlite:///{(BASE_DIR / 'db.sqlite3').as_posix()}",
-        conn_max_age=env_int("DB_CONN_MAX_AGE", 60),
-        # conn_health_checks=True,  # TypeError: config() got an unexpected keyword argument 'conn_health_checks' happens on older django versions using dj_database_url
-    )
-}
+_db_kwargs = dict(
+    env="DATABASE_URL",
+    default=f"sqlite:///{(BASE_DIR / 'db.sqlite3').as_posix()}",
+    conn_max_age=env_int("DB_CONN_MAX_AGE", 60),
+)
+try:                                    # dj-database-url >= 1.0 / Django >= 4.1
+    DATABASES = {"default": dj_database_url.config(conn_health_checks=True, **_db_kwargs)}
+except TypeError:                       # older dj-database-url (0.5.x on some cPanel hosts)
+    DATABASES = {"default": dj_database_url.config(**_db_kwargs)}
+if DATABASES["default"]["ENGINE"].endswith("postgresql_psycopg2"):
+    # dj-database-url 0.5.x emits the long-removed alias; every supported Django knows plain "postgresql".
+    DATABASES["default"]["ENGINE"] = "django.db.backends.postgresql"
 if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
     # Writers wait instead of failing with "database is locked"; IMMEDIATE makes transactions take the
     # write lock up front, which is what select_for_update() relies on in the payment code.
-    DATABASES["default"].setdefault("OPTIONS", {}).update({"timeout": 20, "transaction_mode": "IMMEDIATE"})
+    import django as _django
+    _sqlite_opts = {"timeout": 20}
+    if _django.VERSION >= (5, 1):       # `transaction_mode` only exists from Django 5.1
+        _sqlite_opts["transaction_mode"] = "IMMEDIATE"
+    DATABASES["default"].setdefault("OPTIONS", {}).update(_sqlite_opts)
     DATABASES["default"]["CONN_MAX_AGE"] = 0
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -124,6 +132,17 @@ STORAGES = {
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
 }
 
+try:
+    import django as _dj
+    if _dj.VERSION < (4, 2):            # the STORAGES setting only exists from Django 4.2
+        STATICFILES_STORAGE = STORAGES["staticfiles"]["BACKEND"]
+except Exception:                       # pragma: no cover
+    pass
+
+# Serve app-bundled static files (Swagger UI, admin CSS) straight from the packages when `collectstatic` was not run,
+# e.g. on shared hosting. Harmless when it was: collected files win.
+WHITENOISE_USE_FINDERS = env_bool("WHITENOISE_USE_FINDERS", True)
+
 # ── REST framework ──────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
@@ -146,6 +165,9 @@ BACKEND_URL = env("BACKEND_URL", "").rstrip("/")   # public origin of this API, 
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", FRONTEND_URL)
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", FRONTEND_URL)
+import django as _dj_ver
+if _dj_ver.VERSION < (4, 0):            # Django 3.2 expects hosts without a scheme
+    CSRF_TRUSTED_ORIGINS = [o.split("://", 1)[-1] for o in CSRF_TRUSTED_ORIGINS]
 
 # ── transport security (defaults are on whenever DEBUG is off) ──────────────
 _PROD = not DEBUG and not TESTING
@@ -153,6 +175,17 @@ SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", _PROD)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https") if env_bool("USE_X_FORWARDED_PROTO", _PROD) else None
 SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", _PROD)
 CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", _PROD)
+# Cookie scope. The browser app and this API should live on the SAME SITE (e.g. app.example.com and api.example.com):
+# then the default SameSite=Lax cookies just work. If they are on different sites (app.a.com, api.b.com) set
+# CROSS_SITE_COOKIES=1 (HTTPS only) so sign-in cookies are sent as SameSite=None; Secure. Safari and some privacy
+# settings still block such third-party cookies, so a shared parent domain (or a same-origin proxy) is far better.
+# SESSION_COOKIE_DOMAIN / CSRF_COOKIE_DOMAIN (e.g. .example.com) are optional and rarely needed.
+CROSS_SITE_COOKIES = env_bool("CROSS_SITE_COOKIES", False)
+if CROSS_SITE_COOKIES:
+    SESSION_COOKIE_SAMESITE = CSRF_COOKIE_SAMESITE = "None"
+    SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_DOMAIN = env("SESSION_COOKIE_DOMAIN") or None
+CSRF_COOKIE_DOMAIN = env("CSRF_COOKIE_DOMAIN") or None
 SECURE_HSTS_SECONDS = env_int("SECURE_HSTS_SECONDS", 31536000 if _PROD else 0)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", _PROD)
 SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", False)

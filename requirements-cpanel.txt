@@ -1,0 +1,16 @@
+# Shared-hosting / cPanel ("Setup Python App") profile. Verified: the full test-suite passes (204 tests) on
+#   * Python 3.13 + Django 4.2  (this file, with Django pinned below 5)
+#   * Python 3.13 + Django 5.2  (this file as written, or requirements.txt)
+#   * Python 3.11 + Django 3.2 / DRF 3.14 / dj-database-url 0.5  (requirements-legacy.txt)
+# Python 3.12+ cannot run Django 3.2 (it imports the removed `cgi` module), so on a 3.13 cPanel app use THIS file.
+# Uses psycopg2-binary, which cPanel hosts can install without system libraries.
+Django>=4.2.20,<5.3
+djangorestframework>=3.14,<4
+django-cors-headers>=4.0,<5
+dj-database-url>=0.5,<4
+psycopg2-binary>=2.9.9
+whitenoise>=6.5,<7
+requests>=2.31,<3
+Pillow>=10.0
+python-dotenv>=1.0,<2
+# Not needed here: gunicorn (Passenger runs the app) and drf-yasg (the API docs are built in).

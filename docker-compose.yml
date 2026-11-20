@@ -1,0 +1,32 @@
+# API only: PostgreSQL + Redis + Django (gunicorn). The web app lives in its own repo/deployment.
+#   cp deploy/.env.example deploy/.env  (edit)   &&   docker compose up --build   ->  http://localhost:8002/
+# Put a TLS-terminating reverse proxy (nginx, Caddy, your host's load balancer) in front for production.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: saed
+      POSTGRES_USER: saed
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saed -d saed"]
+      interval: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+  api:
+    build: .
+    env_file: deploy/.env
+    environment:
+      DATABASE_URL: postgres://saed:${POSTGRES_PASSWORD}@db:5432/saed
+      REDIS_URL: redis://redis:6379/1
+      DJANGO_DEBUG: "0"
+      SECURE_SSL_REDIRECT: "0"        # TLS is terminated by the proxy in front
+      USE_X_FORWARDED_PROTO: "1"
+      TRUSTED_PROXY_COUNT: "1"
+    ports: ["8002:8002"]
+    depends_on:
+      db: {condition: service_healthy}
+    volumes: [protected:/data/protected_media, media:/data/media]
+volumes: {pgdata: {}, protected: {}, media: {}}

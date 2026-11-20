@@ -43,6 +43,11 @@ _CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inli
         "script-src 'self' 'unsafe-inline'; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'")
 
 
+def _api_base(request):
+    """'/api/' derived from the docs URL itself, so the pages keep working when the API is mounted elsewhere."""
+    return request.path.rsplit("/", 2)[0] + "/"
+
+
 def _page(html):
     r = HttpResponse(html)
     r["Content-Security-Policy"] = _CSP
@@ -53,16 +58,17 @@ def _page(html):
 @never_cache
 def swagger_ui(request):
     _guard(request)
+    base = _api_base(request)
     css, js = static("saed/apidocs/swagger/swagger-ui.css"), static("saed/apidocs/swagger/swagger-ui-bundle.js")
     return _page(f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>SAED API — Swagger UI</title>
 <link rel="stylesheet" href="{css}"><style>body{{margin:0}}.topbar{{display:none}}</style></head>
 <body><div id="swagger-ui"></div><script src="{js}"></script><script>
 function csrf(){{var m=document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);return m?decodeURIComponent(m[1]):null}}
-window.ui=SwaggerUIBundle({{url:"/api/openapi.json",
+window.ui=SwaggerUIBundle({{url:"{base}openapi.json",
  dom_id:"#swagger-ui",deepLinking:true,persistAuthorization:true,tryItOutEnabled:false,
  requestInterceptor:function(req){{req.credentials="include";var t=csrf();if(t&&!/^(GET|HEAD|OPTIONS)$/i.test(req.method)){{req.headers["X-CSRFToken"]=t}}return req}}}});
-fetch("/api/csrf/",{{credentials:"include"}}).catch(function(){{}});
+fetch("{base}csrf/",{{credentials:"include"}}).catch(function(){{}});
 </script></body></html>""")
 
 
@@ -70,11 +76,12 @@ fetch("/api/csrf/",{{credentials:"include"}}).catch(function(){{}});
 @never_cache
 def redoc(request):
     _guard(request)
+    base = _api_base(request)
     js = static("saed/apidocs/redoc/redoc.standalone.js")
     return _page(f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>SAED API — ReDoc</title>
 <style>body{{margin:0}}</style></head><body><div id="r"></div><script src="{js}"></script>
-<script>Redoc.init("/api/openapi.json",{{hideDownloadButton:false}},document.getElementById("r"))</script></body></html>""")
+<script>Redoc.init("{base}openapi.json",{{hideDownloadButton:false}},document.getElementById("r"))</script></body></html>""")
 
 
 def docs_redirect(request):

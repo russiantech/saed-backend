@@ -1,39 +1,14 @@
-
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
-
-# Virtual environments
+*.pyc
 .venv/
 venv/
-env/
-
-# Environment variables and secrets
 .env
 .env.*
-!.env.example
-
-# Local databases
-*.sqlite3
-*.db
-
-# User uploads
-/media/
-/protected_media/*
-!/protected_media/.gitkeep
-
-# Generated files
+db.sqlite3
 staticfiles/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-*.log
-
-# IDE and operating system
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
+media/*
+protected_media/*
+!media/.gitkeep
+!protected_media/.gitkeep
+tmp/
+stderr.log
