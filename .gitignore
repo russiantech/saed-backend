@@ -4,6 +4,10 @@ __pycache__/
 venv/
 .env
 .env.*
+*.env
+.env
+.env.*
+!.env.example
 db.sqlite3
 staticfiles/
 media/*
