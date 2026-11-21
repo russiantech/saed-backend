@@ -304,12 +304,16 @@ def _public_media_base(request=None):
     return ""
 
 
-def _letter_payload(user, p):
-    """Letters are never public URLs: they are streamed in-app through an authenticated endpoint."""
+def _letter_payload(user, p, request=None):
+    """Letters are never public URLs: they are streamed in-app through an authenticated endpoint.
+
+    The URL is ABSOLUTE (API host), like every other media URL: when the web app and the API are on different hosts a
+    relative path would be requested from the web app's own host and come back as that site's HTML page."""
     from ..services import media as _media
     info = _media.letter_info(p)
     has = bool(p and p.partnership_letter)
-    return {"partnershipLetter": f"/api/users/{user.id}/partnership-letter/" if has else None,
+    path = f"/api/users/{user.id}/partnership-letter/"
+    return {"partnershipLetter": f"{_public_media_base(request)}{path}" if has else None,
             "partnershipLetterName": info["name"], "partnershipLetterKind": info["kind"],
             "partnershipLetterAvailable": info["available"]}
 
@@ -371,7 +375,7 @@ def user_payload(user, request=None, lifecycle_info=False):
         "paymentVerified": p.payment_verified if p else False,
         "paymentReference": p.payment_reference if p else "",
         "profilePicture": _media_url(p.profile_picture.name if p and p.profile_picture else None, request),
-        **_letter_payload(user, p),
+        **_letter_payload(user, p, request),
         "isRestricted": p.authorization_status == "restricted" if p else False,
         "restrictedById": p.restricted_by_id if p else None,
         "restrictedAt": p.restricted_at.isoformat() if p and p.restricted_at else None,

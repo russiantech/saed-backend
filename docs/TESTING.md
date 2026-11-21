@@ -2,7 +2,7 @@
 
 ## Automated
 ```bash
-python manage.py test saed         # 204 tests: payments, webhook, permissions, uploads, streaming, discovery, in-camp
+python manage.py test saed         # 205 tests: payments, webhook, permissions, uploads, streaming, discovery, in-camp
 ```
 Key automated cases: the 2,548,224 vs 2,500,000 scenario (success, no false failure); real amount/currency/customer/reference mismatches (no access, flagged); duplicate webhooks and verify+webhook races (single grant); bad signature rejected; token reuse for another lesson/kind rejected; revoked access stops streaming; fee bypass attempts rejected.
 
@@ -33,7 +33,7 @@ Use test keys (`sk_test_…`, `pk_test_…`) and test cards from Paystack's docs
 * Frontend: camps page, client-side date validation, auth logo → home link.
 * Totals: 145 backend tests (SQLite and PostgreSQL), 22 frontend tests.
 
-## Stack matrix (all 204 tests green)
+## Stack matrix (all 205 tests green)
 ```bash
 python3.13 -m venv v && v/bin/pip install -r requirements-dev.txt && DJANGO_DEBUG=1 v/bin/python manage.py test          # Django 5.2
 pip install -r requirements-cpanel.txt "Django>=4.2,<4.3" openapi-spec-validator                                         # Django 4.2, Python 3.13

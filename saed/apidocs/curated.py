@@ -1,7 +1,7 @@
 """Hand-written documentation layered on top of the introspected OpenAPI spec."""
 import re
 
-API_VERSION = "2.5.0"
+API_VERSION = "2.5.1"
 
 DESCRIPTION = """\
 The SAED API powers the Skills Acquisition & Entrepreneurship Development platform for NYSC corps members,

@@ -1,4 +1,4 @@
-# Shared-hosting / cPanel ("Setup Python App") profile. Verified: the full test-suite passes (204 tests) on
+# Shared-hosting / cPanel ("Setup Python App") profile. Verified: the full test-suite passes (205 tests) on
 #   * Python 3.13 + Django 4.2  (this file, with Django pinned below 5)
 #   * Python 3.13 + Django 5.2  (this file as written, or requirements.txt)
 #   * Python 3.11 + Django 3.2 / DRF 3.14 / dj-database-url 0.5  (requirements-legacy.txt)

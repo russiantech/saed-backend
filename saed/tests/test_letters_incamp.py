@@ -58,10 +58,17 @@ class PartnershipLetterTests(TestCase):
         from django.test import Client
         self.assertIn(Client().get(f"/api/users/{self.trainer.id}/partnership-letter/").status_code, (401, 403))
 
+    @override_settings(BACKEND_URL="https://saed-api.example.org")
+    def test_letter_url_uses_the_configured_api_origin(self):
+        self.put_letter()
+        me = self.tc.get("/api/auth/me/").json()["user"]
+        self.assertEqual(me["partnershipLetter"], f"https://saed-api.example.org/api/users/{self.trainer.id}/partnership-letter/")
+
     def test_payload_exposes_api_path_never_a_media_url(self):
         self.put_letter()
         me = self.tc.get("/api/auth/me/").json()["user"]
-        self.assertEqual(me["partnershipLetter"], f"/api/users/{self.trainer.id}/partnership-letter/")
+        # absolute on the API host (not relative: a separately hosted web app would request it from its OWN host)
+        self.assertEqual(me["partnershipLetter"], f"http://testserver/api/users/{self.trainer.id}/partnership-letter/")
         self.assertTrue(me["partnershipLetterAvailable"])
         self.assertEqual(me["partnershipLetterKind"], "pdf")
         self.assertNotIn("/media/", me["partnershipLetter"])

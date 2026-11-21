@@ -1,6 +1,6 @@
 # Deploying the API on cPanel ("Setup Python App")
 
-Tested profile: **Python 3.13 + `requirements-cpanel.txt`** (Django 4.2–5.2). All 204 tests pass on it.
+Tested profile: **Python 3.13 + `requirements-cpanel.txt`** (Django 4.2–5.2). All 205 tests pass on it.
 The web app is deployed separately (see the frontend repo's `docs/DEPLOYMENT.md`).
 
 ## 0. Decide the host names first (this prevents the #1 production problem)

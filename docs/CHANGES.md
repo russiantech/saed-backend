@@ -61,6 +61,10 @@ Dunis Admin has final authority on fees and disputed payments; SAED Admin keeps 
 * Frontend now requires Node ≥ 22.13 (pdfjs-dist 6.5.438 – the first release without the 2026 arbitrary-JS-execution advisory).
 
 
+## v2.5.1 — Partnership-letter URL is absolute  *(backend)*
+* `partnershipLetter` in user payloads is now an absolute URL on the API host (`BACKEND_URL`, else the request host), like profile pictures and lesson media. It used to be API-relative (`/api/users/<id>/partnership-letter/`); when the web app and API are on different hosts, a browser resolved that against the web app's host and received the web app's own HTML page instead of the letter. Works with any frontend version.
+* Tests: 205.
+
 ## v2.5.0 — Streams; In-Camp and Post-Camp as separate programmes; production hardening  *(backend)*
 **Features**
 * `Stream` and `StreamMembership` models; camps and courses belong to streams; per-stream account life-cycle with live expiry (`403 stream_expired`), `deactivate_incamp` job and `POST /api/admin/run-stream-expiry/`.
