@@ -149,7 +149,7 @@ class SaedApiTests(TestCase):
         client = self.login(self.admin)
         response = patch_json(client, f"/api/manage/users/{self.admin.id}/", {"isActive": False})
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 400)
         self.admin.refresh_from_db()
         self.assertTrue(self.admin.is_active)
 

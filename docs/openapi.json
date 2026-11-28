@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "SAED Learning Platform API",
-    "version": "2.5.1",
+    "version": "2.5.2",
     "summary": "REST API for the SAED In-Camp / Post-Camp learning platform.",
     "description": "The SAED API powers the Skills Acquisition & Entrepreneurship Development platform for NYSC corps members,\ntheir trainers and SAED / Dunis administrators.\n\n## Authentication\nSession-cookie authentication. `POST /auth/login/` sets the session cookie. **All unsafe requests\n(POST/PUT/PATCH/DELETE) must send the `X-CSRFToken` header** — fetch the token from `GET /csrf/`.\nIn Swagger UI the header is added automatically.\n\n## Roles\n`corps_member`, `trainer`, `saed_admin`, `dunis_admin`. Each operation lists the roles allowed to call it.\n\n## Errors\nFailures return JSON `{\"error\": \"<human readable message>\"}` (validation errors may add `fields`).\nAuthentication throttling returns **429** with a `Retry-After` header.\n\n## Payments\nPaystack amounts are in **kobo** (`amountKobo`) and always verified server-side against the amount the\nserver requested. Never trust a browser callback — call `POST /payments/verify/` or rely on the signed\nwebhook (`POST /webhooks/paystack/`, `x-paystack-signature` HMAC-SHA512, idempotent).\n\n## Media\nLesson videos/documents are private. They are streamed by `GET /lessons/{lesson_id}/media/{kind}/` after an\naccess check, with HTTP `Range` support. They are never exposed via a public URL.\n\n## Pagination\nList endpoints that accept `page` / `pageSize` return `{\"results\": [...], \"count\": n, \"page\": p, \"pageSize\": s}`.\n",
     "license": {
@@ -5651,14 +5651,6 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "restore": {
-                    "type": "string",
-                    "description": ""
-                  },
-                  "authorizationStatus": {
-                    "type": "string",
-                    "description": ""
-                  },
                   "fullName": {
                     "type": "string",
                     "description": "Full name."
@@ -5668,6 +5660,14 @@
                     "description": ""
                   },
                   "phone": {
+                    "type": "string",
+                    "description": ""
+                  },
+                  "restore": {
+                    "type": "string",
+                    "description": ""
+                  },
+                  "authorizationStatus": {
                     "type": "string",
                     "description": ""
                   },
@@ -5722,14 +5722,6 @@
                     "type": "string",
                     "format": "binary"
                   },
-                  "restore": {
-                    "type": "string",
-                    "description": ""
-                  },
-                  "authorizationStatus": {
-                    "type": "string",
-                    "description": ""
-                  },
                   "fullName": {
                     "type": "string",
                     "description": "Full name."
@@ -5739,6 +5731,14 @@
                     "description": ""
                   },
                   "phone": {
+                    "type": "string",
+                    "description": ""
+                  },
+                  "restore": {
+                    "type": "string",
+                    "description": ""
+                  },
+                  "authorizationStatus": {
                     "type": "string",
                     "description": ""
                   },

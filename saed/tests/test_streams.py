@@ -2,6 +2,7 @@
 import csv
 import io
 from datetime import timedelta
+import json
 from unittest import mock
 
 from django.contrib.auth.models import User
@@ -454,3 +455,37 @@ class ReportTests(TestCase):
         pc = self.admin.get("/api/manage/users/?track=post_camp").json()["users"]
         self.assertIn("pc@x.com", {u["email"] for u in pc})
         self.assertNotIn("c1@x.com", {u["email"] for u in pc})
+
+
+class AdminParityTests(TestCase):
+    """saed_admin and dunis_admin share the same Users-page action set."""
+
+    def _roles(self):
+        from .helpers import mk_user, login  # noqa
+        return mk_user, login
+
+    def test_both_admin_roles_can_remove_restore_deactivate(self):
+        from .helpers import mk_user, login
+        for role in ("saed_admin", "dunis_admin"):
+            admin = mk_user(f"{role}-parity@example.com", role)
+            t = mk_user(f"t-{role}@example.com", "trainer")
+            c = login(admin)
+
+            def patch(body, c=c, t=t):
+                return c.patch(f"/api/manage/users/{t.id}/", json.dumps(body), content_type="application/json")
+
+            self.assertEqual(patch({"isActive": False}).status_code, 200)
+            t.refresh_from_db(); self.assertFalse(t.is_active)
+            self.assertEqual(patch({"isActive": True}).status_code, 200)
+            self.assertEqual(patch({"authorizationStatus": "removed"}).status_code, 200)
+            t.refresh_from_db(); self.assertFalse(t.is_active)
+            self.assertEqual(patch({"restore": True}).status_code, 200)
+            t.refresh_from_db()
+            self.assertTrue(t.is_active)
+            self.assertEqual(t.profile.authorization_status, "pending")
+
+    def test_admin_cannot_deactivate_self(self):
+        from .helpers import mk_user, login
+        a = mk_user("selfsaed@example.com", "saed_admin")
+        r = login(a).patch(f"/api/manage/users/{a.id}/", json.dumps({"isActive": False}), content_type="application/json")
+        self.assertEqual(r.status_code, 400)

@@ -165,30 +165,10 @@ class ManageUserDetailView(APIView):
         if not profile:
             profile = Profile.objects.create(user=user)
 
-        # Role boundary, enforced here (not just hidden in the UI):
-        # dunis_admin is a superset admin -- it can do everything saed_admin
-        # can, plus account-lifecycle actions (remove/restore, raw isActive
-        # toggling). saed_admin is restricted to authorization decisions
-        # (approve/disapprove/decline/re-review) and must never be able to
-        # remove, restore, or directly activate/deactivate an account, even
-        # by calling this endpoint directly rather than clicking a button.
-        actor_role = role_for(request.user)
-        if actor_role == "saed_admin":
-            if data.get("restore"):
-                return Response(
-                    {"error": "You do not have permission to restore trainers."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            if data.get("authorizationStatus") == "removed":
-                return Response(
-                    {"error": "You do not have permission to remove trainers."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            if "isActive" in data:
-                return Response(
-                    {"error": "You do not have permission to activate or deactivate accounts."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+        # Both admin roles (saed_admin and dunis_admin) have the same action
+        # set here: view, edit, approve/disapprove/decline, re-review,
+        # remove/restore and activate/deactivate. Self-protection and the
+        # transition rules below apply equally to both.
 
         try:
             with transaction.atomic():

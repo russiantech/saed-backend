@@ -37,7 +37,7 @@
 | SAED Admin | Dashboard, Users, Courses, Enrollments, Profile, Notifications |
 | Dunis Admin | SAED Admin items + Payments & Fees |
 
-Dunis Admin has final authority on fees and disputed payments; SAED Admin keeps its existing roles (read-only on fees).
+Dunis Admin has final authority on fees and disputed payments; SAED Admin has the same Users-page actions (view, edit, approve, re-review, remove, restore, deactivate); fees stay read-only.
 
 
 ## v2.1.0 — tooling, production hardening and API docs
@@ -60,6 +60,10 @@ Dunis Admin has final authority on fees and disputed payments; SAED Admin keeps 
 * **Forms/controls**: one consistent, responsive style system; fixed the dark-sidebar Logout contrast and the 5-column users table.
 * Frontend now requires Node ≥ 22.13 (pdfjs-dist 6.5.438 – the first release without the 2026 arbitrary-JS-execution advisory).
 
+
+## v2.5.2 — SAED admins get the full Users action set  *(backend)*
+* `PATCH /api/manage/users/{id}/`: `saed_admin` may now remove, restore and activate/deactivate trainers, exactly like `dunis_admin` (previously these returned 403). Transition rules are unchanged for both roles: Approve is refused for removed accounts, Restore always lands on pending, an admin cannot deactivate themselves.
+* Self-deactivation now returns 400 (self-protection rule) instead of 403.
 
 ## v2.5.1 — Partnership-letter URL is absolute  *(backend)*
 * `partnershipLetter` in user payloads is now an absolute URL on the API host (`BACKEND_URL`, else the request host), like profile pictures and lesson media. It used to be API-relative (`/api/users/<id>/partnership-letter/`); when the web app and API are on different hosts, a browser resolved that against the web app's host and received the web app's own HTML page instead of the letter. Works with any frontend version.

@@ -7,7 +7,7 @@ This repository is **only the API**. The web app is a separate repository (`saed
 
 | | |
 |---|---|
-| Version | **2.5.1** (API contract version in `saed/apidocs/curated.py`) |
+| Version | **2.5.2** (API contract version in `saed/apidocs/curated.py`) |
 | Runtime | Python 3.10 – 3.13 · Django 5.2 (4.2 and 3.2 supported, see below) · Django REST Framework |
 | Database | SQLite (development) or PostgreSQL 16 — one setting, `DATABASE_URL` |
 | Auth | Cookie session + CSRF header (`X-CSRFToken`), no tokens in `localStorage` |
@@ -137,7 +137,7 @@ docs/              README guides, API.md, openapi.json, CHANGES, MIGRATION, TEST
 ## 9. Compatibility with the frontend
 | Backend | Frontend | Notes |
 |---|---|---|
-| 2.5.x | **2.5.x** (frontend 2.5.2 current) | streams, tracks, proposals, reports, `config.js` runtime API address |
+| 2.5.x | **2.5.x** (frontend 2.5.3 current) | streams, tracks, proposals, reports, `config.js` runtime API address |
 | 2.5.x | 2.4.x | **not compatible**: sign-up now takes `accountMode` `in_camp`/`post_camp` (no `both`) and In-Camp needs a `streamId` |
 | 2.4.x | 2.4.x | previous release |
 
